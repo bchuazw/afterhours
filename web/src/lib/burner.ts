@@ -94,7 +94,7 @@ export function burnerConnector(rpcUrl: string) {
           ? [{ address: account.address, capabilities: {} as Record<string, unknown> }]
           : [account.address];
         return {
-          accounts: accounts as withCapabilities extends true
+          accounts: accounts as unknown as withCapabilities extends true
             ? readonly { address: Address; capabilities: Record<string, unknown> }[]
             : readonly Address[],
           chainId: chainFor(chainId).id,

@@ -48,7 +48,7 @@ contract Deploy is Script {
         vm.startBroadcast(pk);
         usd = new MockERC20("AfterHours Test USD", "tUSD", 6);
         market = new AfterHoursMarket(
-            IERC20(address(usd)), IPricer(pricer), deployer, "https://afterhours.bchua.dev/meta/{id}.json"
+            IERC20(address(usd)), IPricer(pricer), deployer, "https://bchuazw.github.io/afterhours/meta/{id}.json"
         );
         usd.mint(deployer, seed * us.length + 1_000_000e6);
 
