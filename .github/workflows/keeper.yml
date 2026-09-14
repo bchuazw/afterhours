@@ -1,0 +1,39 @@
+name: keeper
+
+# Mirrors Robinhood Chain mainnet Chainlink equity feeds onto the testnet FeedMirrors and settles
+# expired series. Runs every 15 minutes; the market is 24/5 so most weekend runs are no-ops.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: keeper
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: keeper/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: keeper
+      - name: mirror feeds
+        run: pnpm mirror:once
+        working-directory: keeper
+        env:
+          RELAYER_KEY: ${{ secrets.RELAYER_KEY }}
+      - name: settle expired series
+        run: pnpm tsx src/settle.ts --once
+        working-directory: keeper
+        env:
+          RELAYER_KEY: ${{ secrets.RELAYER_KEY }}
