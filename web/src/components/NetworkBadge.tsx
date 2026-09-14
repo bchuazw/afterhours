@@ -44,9 +44,11 @@ export function NetworkBadge() {
   }
 
   return (
-    <span className="pill hidden sm:inline-flex" title={`chainId ${robinhoodTestnet.id}`}>
-      <span className="pill-dot bg-accent" />
-      Robinhood Chain Testnet
+    <span className="hidden sm:inline-flex">
+      <span className="pill" title={`chainId ${robinhoodTestnet.id}`}>
+        <span className="pill-dot bg-accent" />
+        Robinhood Chain Testnet
+      </span>
     </span>
   );
 }

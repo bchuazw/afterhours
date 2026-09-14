@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useAccount, useBalance, useConnect, useDisconnect } from "wagmi";
 import { formatEther } from "viem";
 import { BURNER_ID, burnerAddress, exportBurnerKey, resetBurner } from "@/lib/burner";
@@ -38,7 +39,7 @@ export function WalletButton() {
           Connect
         </button>
       )}
-      {open && <WalletModal onClose={() => setOpen(false)} />}
+      {open && createPortal(<WalletModal onClose={() => setOpen(false)} />, document.body)}
     </>
   );
 }
