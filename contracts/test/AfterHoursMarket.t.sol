@@ -196,6 +196,20 @@ contract AfterHoursMarketTest is Test {
         assertEq(market.getSeries(id).settlePrice, 320 * P8);
     }
 
+    function test_settle_usesFirstPostExpiryPrintNotLatest() public {
+        uint64 expiry = uint64(block.timestamp + 7 days);
+        (uint256 id,) = _buy(340 * P8, expiry, UNIT);
+        vm.startPrank(relayer);
+        feed.pushRound(2, int256(350 * P8), expiry - 3 hours); // pre-expiry, ignored
+        feed.pushRound(3, int256(320 * P8), expiry + 5 minutes); // first post-expiry print
+        feed.pushRound(4, int256(300 * P8), expiry + 1 hours);
+        feed.pushRound(5, int256(290 * P8), expiry + 3 hours); // latest, more favourable to buyer
+        vm.stopPrank();
+        vm.warp(expiry + 4 hours);
+        market.settle(id);
+        assertEq(market.getSeries(id).settlePrice, 320 * P8);
+    }
+
     function test_settle_fallbackAfterGrace() public {
         uint64 expiry = uint64(block.timestamp + 7 days);
         (uint256 id,) = _buy(340 * P8, expiry, UNIT);

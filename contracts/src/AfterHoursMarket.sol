@@ -68,6 +68,8 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard {
     address public treasury;
     uint16 public protocolFeeBps; // taken from premium
 
+    uint256 public constant MAX_SETTLE_WALK = 300;
+
     uint64 public minTenor = 1 hours;
     uint64 public maxTenor = 30 days;
     /// @notice A quote is rejected if the feed's latest print is older than this. Weekends freeze the
@@ -302,7 +304,7 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard {
 
         Underlying storage u = _underlyings[s.underlyingId];
         if (_isPaused(u.feed)) revert FeedPaused();
-        (, int256 answer,, uint256 updatedAt,) = u.feed.latestRoundData();
+        (uint80 roundId, int256 answer,, uint256 updatedAt,) = u.feed.latestRoundData();
         if (answer <= 0) revert InvalidAnswer();
 
         bool fallbackUsed;
@@ -311,6 +313,10 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard {
                 revert AwaitingPostExpiryPrint(s.expiry, updatedAt);
             }
             fallbackUsed = true;
+        } else {
+            // Walk back to the *first* print at/after expiry so a late settle call cannot pick a
+            // later, more convenient price. Bounded; the keeper settles within minutes in practice.
+            answer = _firstPrintAtOrAfter(u.feed, roundId, answer, s.expiry);
         }
         s.settled = true;
         s.settlePrice = _normalize(answer);
@@ -348,6 +354,26 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard {
         (, int256 answer,, uint256 updatedAt,) = feed.latestRoundData();
         if (answer <= 0) revert InvalidAnswer();
         if (updatedAt + maxPriceAge < block.timestamp) revert StalePrice(updatedAt);
+    }
+
+    /// @dev Starting from `roundId` (known to be at/after `expiry`), step back through earlier
+    ///      rounds while they are still at/after expiry. Stops at a phase boundary, a missing
+    ///      round or after MAX_SETTLE_WALK steps, returning the earliest qualifying answer found.
+    function _firstPrintAtOrAfter(IAggregatorV3 feed, uint80 roundId, int256 answer, uint64 expiry)
+        internal
+        view
+        returns (int256)
+    {
+        for (uint256 i; i < MAX_SETTLE_WALK && roundId > 1; ++i) {
+            try feed.getRoundData(roundId - 1) returns (uint80, int256 pAnswer, uint256, uint256 pUpdatedAt, uint80) {
+                if (pUpdatedAt < expiry || pAnswer <= 0) break;
+                roundId -= 1;
+                answer = pAnswer;
+            } catch {
+                break;
+            }
+        }
+        return answer;
     }
 
     function _isPaused(IAggregatorV3 feed) internal view returns (bool) {
