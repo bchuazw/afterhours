@@ -1,7 +1,8 @@
 /**
- * Robinhood Chain Stock Token feeds print 24/5. The observed Chainlink schedule freezes the
- * last print at Friday 20:00 UTC and resumes Sunday ~22:00 UTC. We treat any print older than
- * 30 minutes on a Saturday/Sunday (UTC) as "market closed, feed frozen".
+ * Robinhood Chain Stock Token feeds print 24/5: the overnight session opens Sunday 20:00 ET and
+ * the week closes Friday 20:00 ET, i.e. Saturday 00:00 -> Monday 00:00 UTC during daylight time.
+ * This mirrors `closed_seconds` in the Stylus pricer. We treat any print older than 30 minutes on
+ * a Saturday/Sunday (UTC) as "market closed, feed frozen".
  */
 
 export const FROZEN_AFTER_MS = 30 * 60 * 1000;
@@ -50,15 +51,10 @@ export function nextFridayClose(nowMs = Date.now()): number {
   return Math.floor(target.getTime() / 1000);
 }
 
-/** Is a unix-second timestamp inside the 24/5 closed window (Fri 20:00 UTC to Sun 22:00 UTC)? */
+/** Is a unix-second timestamp inside the 24/5 closed window (Sat 00:00 to Mon 00:00 UTC)? */
 export function isClosedAt(ts: number): boolean {
-  const d = new Date(ts * 1000);
-  const dow = d.getUTCDay();
-  const h = d.getUTCHours() + d.getUTCMinutes() / 60;
-  if (dow === 6) return true;
-  if (dow === 5 && h >= 20) return true;
-  if (dow === 0 && h < 22) return true;
-  return false;
+  const dow = new Date(ts * 1000).getUTCDay();
+  return dow === 6 || dow === 0;
 }
 
 /** Value for an <input type="datetime-local"> (local wall-clock time). */

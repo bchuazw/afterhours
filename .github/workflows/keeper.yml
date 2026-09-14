@@ -17,22 +17,31 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - id: dep
+        name: check deployment exists
+        run: |
+          if [ -f contracts/deployments/46630.json ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "no deployment yet; skipping"; echo "ok=false" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.dep.outputs.ok == 'true'
+        uses: pnpm/action-setup@v4
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - if: steps.dep.outputs.ok == 'true'
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: keeper/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
+      - if: steps.dep.outputs.ok == 'true'
+        run: pnpm install --frozen-lockfile
         working-directory: keeper
-      - name: mirror feeds
+      - if: steps.dep.outputs.ok == 'true'
+        name: mirror feeds
         run: pnpm mirror:once
         working-directory: keeper
         env:
           RELAYER_KEY: ${{ secrets.RELAYER_KEY }}
-      - name: settle expired series
+      - if: steps.dep.outputs.ok == 'true'
+        name: settle expired series
         run: pnpm tsx src/settle.ts --once
         working-directory: keeper
         env:

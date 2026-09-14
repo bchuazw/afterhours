@@ -35,7 +35,7 @@ export default function Page() {
         <h2 className="text-base font-semibold">The weekend-gap thesis</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted">
           Tokenized stocks like TSLA, AMZN and NVDA trade onchain 24/7, but their Chainlink price feeds follow the
-          equity session: they print 24/5 and freeze from Friday 20:00 UTC until Sunday 22:00 UTC. Anyone holding a Stock
+          equity session: they print 24/5 and freeze from Friday 20:00 ET until Sunday 20:00 ET (Saturday 00:00 to Monday 00:00 UTC in daylight time). Anyone holding a Stock
           Token over the weekend is exposed to whatever happens between the last Friday print and the first Monday
           print, with no venue to hedge it. That gap is exactly what AfterHours prices and pays out.
         </p>

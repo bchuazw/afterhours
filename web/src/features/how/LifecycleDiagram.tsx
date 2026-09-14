@@ -2,7 +2,7 @@
 export function LifecycleDiagram() {
   const steps = [
     { x: 60, title: "Buy", sub: "Fri, market open", detail: "premium in, collateral locked" },
-    { x: 260, title: "Feed frozen", sub: "Fri 20:00 → Sun 22:00 UTC", detail: "token trades, feed does not" },
+    { x: 260, title: "Feed frozen", sub: "Fri 20:00 → Sun 20:00 ET", detail: "token trades, feed does not" },
     { x: 460, title: "First print", sub: "at / after expiry", detail: "settle(id) by anyone" },
     { x: 660, title: "Claim", sub: "cash-settled", detail: "max(strike − print, 0) × units" },
   ];
