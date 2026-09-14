@@ -26,3 +26,5 @@ dist/
 .DS_Store
 .playwright-mcp/
 media/raw/
+media/out/
+media/node_modules/

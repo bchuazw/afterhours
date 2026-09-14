@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AfterHours pitch</title>
+<style>
+  :root { --bg:#0B0F19; --panel:#121828; --line:#232B3F; --text:#E6E9F2; --muted:#8B93A7; --a:#7C5CFF; --b:#22D3EE; --warn:#F59E0B; --good:#34D399; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; background:#000; color:var(--text); font-family: Inter, "Segoe UI", system-ui, -apple-system, sans-serif; }
+  .slide { width:1280px; height:720px; background:var(--bg); position:relative; overflow:hidden; padding:72px 88px; display:flex; flex-direction:column; justify-content:center; }
+  .slide + .slide { margin-top:24px; }
+  .kicker { color:var(--b); font-weight:700; letter-spacing:.14em; text-transform:uppercase; font-size:16px; margin-bottom:18px; }
+  h1 { font-size:64px; line-height:1.05; margin:0 0 20px; font-weight:800; letter-spacing:-.02em; }
+  h2 { font-size:46px; line-height:1.1; margin:0 0 26px; font-weight:800; letter-spacing:-.02em; }
+  p, li { font-size:24px; line-height:1.45; color:var(--text); margin:0; }
+  .muted { color:var(--muted); }
+  .grad { background:linear-gradient(90deg,var(--a),var(--b)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .row { display:flex; gap:28px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:26px 28px; flex:1; }
+  .card h3 { margin:0 0 10px; font-size:22px; color:var(--b); font-weight:700; }
+  .card p { font-size:20px; color:var(--muted); }
+  .big { font-size:88px; font-weight:800; letter-spacing:-.03em; line-height:1; }
+  .foot { position:absolute; left:88px; right:88px; bottom:36px; display:flex; justify-content:space-between; color:var(--muted); font-size:16px; }
+  .logo { display:flex; align-items:center; gap:12px; font-weight:800; font-size:18px; color:var(--text); }
+  .logo svg { width:28px; height:28px; }
+  .timeline { margin-top:22px; height:110px; position:relative; border-top:2px solid var(--line); }
+  .seg { position:absolute; top:-2px; height:14px; border-radius:7px; }
+  .lab { position:absolute; top:30px; font-size:18px; color:var(--muted); }
+  code, .mono { font-family: "JetBrains Mono", Consolas, monospace; }
+  .formula { font-size:34px; margin:18px 0 8px; }
+  ul { padding-left:28px; margin:0; } li { margin:8px 0; }
+  .tag { display:inline-block; padding:6px 12px; border:1px solid var(--line); border-radius:999px; font-size:16px; color:var(--muted); margin-right:8px; }
+</style>
+</head>
+<body>
+
+<section class="slide" id="s1">
+  <div class="kicker">Arbitrum Open House Singapore · Robinhood Chain</div>
+  <h1><span class="grad">AfterHours</span></h1>
+  <h2 style="font-weight:600;color:var(--muted);font-size:40px">Weekend-gap protection for tokenized stocks, priced onchain.</h2>
+  <p class="muted" style="margin-top:22px">Fully collateralized puts on Stock Tokens · Stylus (Rust) pricing engine · settled on the first Monday print</p>
+  <div class="foot"><span class="logo">AfterHours</span><span>github.com/bchuazw/afterhours</span></div>
+</section>
+
+<section class="slide" id="s2">
+  <div class="kicker">The gap</div>
+  <h2>Stock Tokens trade 24/7. Their price feeds run 24/5.</h2>
+  <p>Chainlink's tokenized-equity feeds publish through the overnight session, then go quiet from <b>Friday 20:00 ET to Sunday 20:00 ET</b>. The Uniswap pools for RHTSLA, RHNVDA and RHAMZN never close.</p>
+  <div class="timeline">
+    <div class="seg" style="left:0;width:71%;background:linear-gradient(90deg,var(--a),var(--b))"></div>
+    <div class="seg" style="left:71%;width:29%;background:var(--line)"></div>
+    <div class="lab" style="left:0">Sun 20:00 ET · feed live</div>
+    <div class="lab" style="left:71%;color:var(--warn)">Fri 20:00 ET · feed frozen · tokens still trading</div>
+    <div class="lab" style="right:0;top:62px;font-size:40px;font-weight:800;color:var(--warn)">52 h / week unhedged</div>
+  </div>
+  <div class="foot"><span class="logo">AfterHours</span><span>2 / 8</span></div>
+</section>
+
+<section class="slide" id="s3">
+  <div class="kicker">Who carries it</div>
+  <h2>Nothing on the chain prices weekend gap risk.</h2>
+  <div class="row">
+    <div class="card"><h3>Holders</h3><p>Own tokenized TSLA into Friday close. Monday opens −8% on news. No hedge existed.</p></div>
+    <div class="card"><h3>Lending markets</h3><p>Stock Tokens as collateral valued by a frozen oracle for two days. Blind to the gap.</p></div>
+    <div class="card"><h3>Existing venues</h3><p>Perps are leverage, not insurance. Lending liquidates, it doesn't protect. Listed options don't exist for the tokens.</p></div>
+  </div>
+  <div class="foot"><span class="logo">AfterHours</span><span>3 / 8</span></div>
+</section>
+
+<section class="slide" id="s4">
+  <div class="kicker">The product</div>
+  <h2>Buy protection. Or write it and earn the premium.</h2>
+  <div class="row">
+    <div class="card"><h3>Protect</h3><p>Pick TSLA · strike 90% · expiry "Monday open". Pay a stablecoin premium. Receive an ERC-1155 position paying <span class="mono">max(strike − settle, 0)</span> per share.</p></div>
+    <div class="card"><h3>Earn</h3><p>Deposit stablecoins into a per-stock ERC-4626 vault. Every premium lands in the vault and lifts the share price. Withdraw any unlocked liquidity.</p></div>
+  </div>
+  <p style="margin-top:26px"><span class="tag">Fully collateralized at sale</span><span class="tag">Cash settled</span><span class="tag">No liquidations</span><span class="tag">No leverage</span><span class="tag">Composable positions</span></p>
+  <div class="foot"><span class="logo">AfterHours</span><span>4 / 8</span></div>
+</section>
+
+<section class="slide" id="s5">
+  <div class="kicker">Pricing · Arbitrum Stylus</div>
+  <h2>The premium is computed onchain, in Rust.</h2>
+  <ul>
+    <li>Walks the feed's Chainlink round history with <span class="mono">getRoundData</span></li>
+    <li>Realized volatility annualized over <b>open-market seconds</b>, so the freeze doesn't dilute it</li>
+    <li>Closed seconds are charged at <span class="mono">m × σ</span>: the weekend has a price</li>
+  </ul>
+  <div class="formula mono">σ<sub>eff</sub>² · T = σ² · ( T<sub>open</sub> + m² · T<sub>closed</sub> )</div>
+  <p class="muted">Black-Scholes put on σ<sub>eff</sub>, plus writer spread, floored at intrinsic. 15 KB of WASM, ~150 lines of i128 fixed-point math, native unit tests. Painful and gas-hungry in Solidity; natural in Rust.</p>
+  <div class="foot"><span class="logo">AfterHours</span><span>5 / 8</span></div>
+</section>
+
+<section class="slide" id="s6">
+  <div class="kicker">Settlement</div>
+  <h2>The first print after expiry. Not a convenient one later.</h2>
+  <div class="row">
+    <div class="card"><h3>Rule</h3><p><span class="mono">settle()</span> walks back the round history to the earliest print at or after expiry. A "Monday open" put settles on the Monday open.</p></div>
+    <div class="card"><h3>Pause-aware</h3><p>If the feed's <span class="mono">oraclePaused()</span> is set for a corporate action, settlement waits.</p></div>
+    <div class="card"><h3>Never stranded</h3><p>If no post-expiry print arrives within the grace window, the last price is used so collateral is always released.</p></div>
+  </div>
+  <div class="foot"><span class="logo">AfterHours</span><span>6 / 8</span></div>
+</section>
+
+<section class="slide" id="s7">
+  <div class="kicker">Why Robinhood Chain · why now</div>
+  <h2>Stock Tokens, Chainlink equity feeds and Stylus only exist together here.</h2>
+  <ul>
+    <li>Robinhood's own docs ask builders for <b>price-reactive logic</b> and <b>yield strategies</b> on Stock Tokens</li>
+    <li>Live on Robinhood Chain testnet, mirroring the <b>real mainnet Chainlink rounds</b> round-for-round, so the demo runs on live market data with the real weekend freeze</li>
+    <li>24 Foundry tests incl. fuzz: payout never exceeds locked collateral · OpenZeppelin v5 · no upgradeability</li>
+  </ul>
+  <div class="foot"><span class="logo">AfterHours</span><span>7 / 8</span></div>
+</section>
+
+<section class="slide" id="s8">
+  <div class="kicker">Next</div>
+  <h2>From weekend puts to the options layer for tokenized equities.</h2>
+  <div class="row">
+    <div class="card"><h3>Product</h3><p>Calls and collars · earnings-week series · protection as a collateral-haircut reducer for lending markets</p></div>
+    <div class="card"><h3>Pricing</h3><p>Implied vol from onchain AMM flow · holiday calendar · per-underlying risk limits for writers</p></div>
+    <div class="card"><h3>Mainnet</h3><p>USDG collateral · native Chainlink proxies · sequencer-uptime checks · audit</p></div>
+  </div>
+  <p style="margin-top:26px" class="muted">AfterHours · github.com/bchuazw/afterhours · built solo during the Open House Singapore Buildathon</p>
+  <div class="foot"><span class="logo">AfterHours</span><span>8 / 8</span></div>
+</section>
+
+</body>
+</html>

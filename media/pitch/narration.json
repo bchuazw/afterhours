@@ -1,0 +1,38 @@
+{
+  "voice": "en-US-AndrewMultilingualNeural",
+  "rate": "+4%",
+  "slides": [
+    {
+      "id": "s1",
+      "text": "This is AfterHours: weekend-gap protection for tokenized stocks, priced entirely onchain. Built on Robinhood Chain with Arbitrum Stylus."
+    },
+    {
+      "id": "s2",
+      "text": "Here's the gap. Robinhood Chain's Stock Tokens trade twenty-four seven on Uniswap. But the Chainlink feeds that price them run twenty-four five. From Friday eight p.m. Eastern to Sunday eight p.m., the oracle is frozen while the tokens keep trading. That is fifty-two hours a week where every holder is unhedged."
+    },
+    {
+      "id": "s3",
+      "text": "Who carries that risk? Holders, who can't hedge Monday's open. Lending markets, whose collateral is valued by a frozen oracle for two days. And nothing on the chain prices it. Perps are leverage, not insurance. Lending liquidates; it doesn't protect. Listed options don't exist for the tokens."
+    },
+    {
+      "id": "s4",
+      "text": "AfterHours is the missing primitive. A holder picks a stock, a strike, and an expiry like Monday open, pays a stablecoin premium, and receives a position that pays out if the settlement price is below the strike. Writers deposit stablecoins into a per-stock vault and earn every premium. Every position is fully collateralized at the moment of sale, so there are no liquidations and no leverage."
+    },
+    {
+      "id": "s5",
+      "text": "The premium is computed onchain by a Rust contract running on Arbitrum Stylus. It walks the feed's own round history, measures realized volatility over open-market hours, and charges the closed hours at a multiple of that volatility. The weekend literally has a price. That is Black-Scholes in about a hundred and fifty lines of fixed-point Rust, with native unit tests. It would be a gas-hungry mess in Solidity."
+    },
+    {
+      "id": "s6",
+      "text": "Settlement uses the first feed print at or after expiry. The contract walks back the round history, so a late settle call cannot cherry-pick a more convenient price. If the feed is paused for a corporate action, settlement waits. And if no print ever arrives, a grace window releases collateral, so funds are never stranded."
+    },
+    {
+      "id": "s7",
+      "text": "Why here, why now? Stock Tokens, Chainlink equity feeds, and Stylus only exist together on Robinhood Chain, and Robinhood's own docs ask for price-reactive logic and yield strategies. AfterHours is live on the Robinhood Chain testnet, mirroring the real mainnet Chainlink rounds, so the demo runs on live market data with the real weekend freeze. Twenty-four Foundry tests, including a fuzz that payout can never exceed locked collateral."
+    },
+    {
+      "id": "s8",
+      "text": "Next: calls and collars, earnings-week series, protection as a collateral haircut reducer for lending markets, and mainnet with USDG. AfterHours: the options layer for tokenized equities. Thank you."
+    }
+  ]
+}

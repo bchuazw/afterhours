@@ -1,0 +1,14 @@
+{
+  "name": "afterhours-media",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pitch": "node build-video.mjs pitch",
+    "demo": "node build-video.mjs demo",
+    "logo": "node build-video.mjs logo"
+  },
+  "devDependencies": {
+    "playwright": "^1.50.0"
+  }
+}
