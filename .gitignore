@@ -1,0 +1,28 @@
+# secrets
+.env
+.env.*
+!.env.example
+*.key
+deployer.json
+
+# foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/**/dry-run/
+
+# rust / stylus
+target/
+**/target/
+
+# node
+node_modules/
+.next/
+out/
+dist/
+.turbo/
+*.log
+
+# misc
+.DS_Store
+.playwright-mcp/
+media/raw/
