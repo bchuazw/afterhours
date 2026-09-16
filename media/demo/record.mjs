@@ -94,28 +94,33 @@ const scenes = {
   async d1(page) {
     await page.goto(BASE + "/", { waitUntil: "networkidle" });
     await page.getByText("Last print", { exact: false }).first().waitFor({ timeout: 30_000 });
-    await sleep(1500);
-    for (const sym of ["TSLA", "AMZN", "NVDA"]) {
-      await glide(page, page.getByRole("button", { name: new RegExp(`^${sym}\\b`) }).first(), { click: false, pause: 1400 });
-    }
-    await glide(page, page.getByRole("button", { name: /^TSLA\b/ }).first(), { pause: 600 });
     await sleep(3000);
+    for (const sym of ["TSLA", "AMZN", "NVDA"]) {
+      await glide(page, page.getByRole("button", { name: new RegExp(`^${sym}\\b`) }).first(), { click: false, pause: 2600 });
+    }
+    await glide(page, page.getByText("Quiet", { exact: true }).first(), { click: false, pause: 3000 }).catch(() => {});
+    await glide(page, page.getByRole("button", { name: /^TSLA\b/ }).first(), { pause: 800 });
+    await sleep(5000);
   },
   async d2(page) {
     await page.goto(BASE + "/", { waitUntil: "networkidle" });
     await page.getByText("Last print", { exact: false }).first().waitFor({ timeout: 30_000 });
-    await glide(page, page.getByRole("button", { name: /^TSLA\b/ }).first(), { pause: 500 });
-    await sleep(800);
-    await glide(page, page.getByRole("button", { name: "90%" }), { pause: 600 });
-    await sleep(800);
-    await glide(page, page.getByRole("button", { name: "Monday open" }), { pause: 600 });
-    await sleep(800);
+    await sleep(1500);
+    await glide(page, page.getByRole("button", { name: /^TSLA\b/ }).first(), { pause: 700 });
+    await sleep(1500);
+    await glide(page, page.getByRole("button", { name: "90%" }), { pause: 900 });
+    await sleep(1500);
+    await glide(page, page.getByRole("button", { name: "Monday open" }), { pause: 900 });
+    await sleep(1500);
     const shares = page.getByRole("button", { name: "10", exact: true });
-    if (await shares.count()) await glide(page, shares.first(), { pause: 600 });
+    if (await shares.count()) await glide(page, shares.first(), { pause: 900 });
     await page.getByText("Effective vol", { exact: false }).first().waitFor({ timeout: 30_000 });
-    await glide(page, page.getByText("Closed-market time", { exact: false }).first(), { click: false, pause: 2500 });
-    await glide(page, page.getByText("Collateral locked", { exact: false }).first(), { click: false, pause: 2000 });
-    await glide(page, page.getByText("Breakeven", { exact: false }).first(), { click: false, pause: 3000 });
+    await sleep(1500);
+    await glide(page, page.getByText("Premium", { exact: true }).first(), { click: false, pause: 3000 }).catch(() => {});
+    await glide(page, page.getByText("Effective vol", { exact: false }).first(), { click: false, pause: 3500 });
+    await glide(page, page.getByText("Closed-market time", { exact: false }).first(), { click: false, pause: 3500 });
+    await glide(page, page.getByText("Collateral locked", { exact: false }).first(), { click: false, pause: 2500 });
+    await glide(page, page.getByText("Breakeven", { exact: false }).first(), { click: false, pause: 3500 });
   },
   async d3(page) {
     await page.goto(BASE + "/", { waitUntil: "networkidle" });
