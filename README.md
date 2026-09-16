@@ -92,6 +92,28 @@ cargo stylus check --endpoint https://rpc.testnet.chain.robinhood.com
 cd keeper && pnpm install && pnpm mirror:once
 ```
 
+## Local end-to-end (Nitro dev node)
+
+Stylus needs a Nitro node, so the full stack can be exercised locally with the
+[Arbitrum Nitro dev node](https://docs.arbitrum.io/run-arbitrum-node/run-nitro-dev-node):
+
+```bash
+docker run -d --name nitro-dev -p 8547:8547 offchainlabs/nitro-node:v3.7.1-926f1ab \
+  --dev --http.addr 0.0.0.0 --http.api=net,web3,eth,debug --http.corsdomain='*' --http.vhosts='*'
+# make the dev account chain owner and register a WASM cache manager (see nitro-devnode/run-dev-node.sh)
+
+cd contracts/stylus/pricer && cargo stylus deploy --endpoint http://127.0.0.1:8547 --private-key $DEV_KEY --no-verify
+cd contracts && PRICER=<pricer> PRIVATE_KEY=$DEV_KEY forge script script/Deploy.s.sol:Deploy --rpc-url http://127.0.0.1:8547 --broadcast
+cd keeper && CHAIN_ID=412346 TESTNET_RPC=http://127.0.0.1:8547 RELAYER_KEY=$DEV_KEY pnpm mirror:once   # real mainnet rounds
+cp contracts/deployments/412346.json web/src/deployments.json && cd web && pnpm dev                     # UI on :3000
+```
+
+The keeper replays the real Robinhood Chain mainnet Chainlink rounds (via Multicall3) onto the local
+`FeedMirror`s, so quotes, sparklines and settlement run on live TSLA/AMZN/NVDA history.
+
+`media/` holds the pitch deck and the demo recorder (`node demo/record.mjs`, Playwright + edge-tts +
+ffmpeg) used to produce the submission videos.
+
 ## Deployments
 
 See [`contracts/deployments/46630.json`](contracts/deployments/46630.json) (Robinhood Chain testnet).
