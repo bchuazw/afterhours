@@ -76,6 +76,8 @@ async function ensureCursor(page) {
 
 async function glide(page, locator, opts = {}) {
   await ensureCursor(page);
+  await locator.scrollIntoViewIfNeeded();
+  await sleep(250);
   const box = await locator.boundingBox();
   if (!box) throw new Error("no box for locator");
   const x = box.x + box.width / 2, y = box.y + box.height / 2;
@@ -134,8 +136,8 @@ const scenes = {
     const buy = page.getByRole("button", { name: /buy protection/i });
     await buy.waitFor({ timeout: 30_000 });
     await glide(page, buy, { pause: 900 });
-    await waitToast(page, /Protection bought|bought|confirmed/i, 120_000).catch(() => {});
-    await sleep(3500);
+    await page.getByText(/Buy TSLA protection confirmed/i).first().waitFor({ timeout: 120_000 }).catch(() => {});
+    await sleep(5000);
   },
   async d4(page) {
     await page.goto(BASE + "/positions", { waitUntil: "networkidle" });
@@ -143,14 +145,16 @@ const scenes = {
     await sleep(2500);
     const settle = page.getByRole("button", { name: "Settle", exact: true });
     if (await settle.count()) {
-      await glide(page, settle.first(), { pause: 800 });
-      await page.getByRole("button", { name: /^Claim/ }).first().waitFor({ timeout: 120_000 });
-      await sleep(2000);
+      await glide(page, settle.first(), { pause: 1200 });
+      await page.getByText(/Settle TSLA series confirmed/i).first().waitFor({ timeout: 120_000 }).catch(() => {});
+      await page.getByRole("button", { name: /^Claim/ }).first().waitFor({ timeout: 60_000 }).catch(() => {});
+      await sleep(3500);
     }
     const claim = page.getByRole("button", { name: /^Claim/ });
     if (await claim.count()) {
-      await glide(page, claim.first(), { pause: 800 });
-      await page.getByText("Claimed", { exact: true }).first().waitFor({ timeout: 120_000 }).catch(() => {});
+      await glide(page, claim.first(), { pause: 1200 });
+      await page.getByText(/^Claim .*confirmed/i).first().waitFor({ timeout: 120_000 }).catch(() => {});
+      await sleep(3000);
     }
     await sleep(4000);
   },
@@ -158,18 +162,21 @@ const scenes = {
     await page.goto(BASE + "/earn", { waitUntil: "networkidle" });
     await page.getByText("Earned premiums", { exact: false }).first().waitFor({ timeout: 60_000 });
     await sleep(1500);
-    await glide(page, page.getByText("Earned premiums", { exact: false }).first(), { click: false, pause: 2500 });
-    await glide(page, page.getByText("utilization", { exact: false }).first(), { click: false, pause: 2000 });
-    const amount = page.getByPlaceholder("0.00").first();
+    const card = page.locator("div", { has: page.getByText("TSLA vault", { exact: false }) }).filter({ has: page.getByPlaceholder("0.00") }).last();
+    await glide(page, card.getByText("Earned premiums", { exact: false }).first(), { click: false, pause: 2500 });
+    await glide(page, card.getByText("utilization", { exact: false }).first(), { click: false, pause: 2000 });
+    const amount = card.getByPlaceholder("0.00").first();
     if (await amount.count()) {
       await glide(page, amount, { pause: 400 });
       await amount.fill("1000");
-      await sleep(600);
-      const btn = page.getByRole("button", { name: /deposit/i }).last();
+      await sleep(800);
+      // The mode toggle is also labelled "Deposit"; the action button is the primary one.
+      const btn = card.locator("button.btn-primary").filter({ hasText: /deposit/i }).first();
       await glide(page, btn, { pause: 800 });
-      await waitToast(page, /Deposit|deposited|confirmed/i, 120_000).catch(() => {});
+      await page.getByText(/Deposit into TSLA vault/i).first().waitFor({ timeout: 120_000 }).catch(() => {});
+      await sleep(6000);
     }
-    await sleep(4000);
+    await sleep(3000);
   },
 };
 
