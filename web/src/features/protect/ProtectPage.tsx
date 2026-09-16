@@ -7,7 +7,7 @@ import { COMPANY, deployment, isZero, type UnderlyingKey } from "@/lib/deploymen
 import { useFeed } from "@/lib/hooks/useFeed";
 import { useMarketConfig, useUnderlyingInfo } from "@/lib/hooks/useMarket";
 import { useErc20Balance } from "@/lib/hooks/useToken";
-import { useNow } from "@/lib/hooks/useNow";
+import { useNow, useMounted } from "@/lib/hooks/useNow";
 import { useDebounced } from "@/lib/hooks/useDebounce";
 import { feedStatus, fromDatetimeLocal, nextFridayClose, nextMondayOpen, toDatetimeLocal } from "@/lib/market-hours";
 import { fmtDuration, fmtPrice, fmtTime, fmtUnits, parseDecimal, PRICE_DECIMALS, UNIT_DECIMALS } from "@/lib/format";
@@ -34,7 +34,10 @@ const toCents = (p8: bigint) => (p8 / 1_000_000n) * 1_000_000n;
 export function ProtectPage() {
   const [key, setKey] = useState<UnderlyingKey>("TSLA");
   const u = deployment.underlyings[key];
-  const { address } = useAccount();
+  const { address: connectedAddress } = useAccount();
+  const mounted = useMounted();
+  // The burner wallet reconnects synchronously on the client; keep the first render server-equal.
+  const address = mounted ? connectedAddress : undefined;
   const now = useNow(1000);
 
   const feed = useFeed(u.feed);

@@ -8,7 +8,9 @@ export const wagmiConfig = createConfig({
   chains: [robinhoodTestnet],
   connectors: [injected({ shimDisconnect: true }), burnerConnector(RPC_URL)],
   transports: { [robinhoodTestnet.id]: http(RPC_URL, { batch: true }) },
-  ssr: false,
+  // Pages are prerendered (static export); defer restoring the persisted connection until after
+  // hydration so the first client render matches the server HTML.
+  ssr: true,
   storage: createStorage({
     storage: typeof window !== "undefined" ? window.localStorage : noopStorage,
     key: "afterhours",

@@ -1,0 +1,26 @@
+{
+  "voice": "en-US-AndrewMultilingualNeural",
+  "rate": "+2%",
+  "scenes": [
+    {
+      "id": "d1",
+      "text": "This is AfterHours running on Robinhood Chain. These are live prices for tokenized Tesla, Amazon and Nvidia, read from Chainlink's tokenized-equity feeds. The status pill tells you whether the feed is printing or frozen. Stock Tokens keep trading on Uniswap all weekend, but these feeds stop on Friday night. AfterHours prices that gap."
+    },
+    {
+      "id": "d2",
+      "text": "Say I hold ten Tesla tokens and want a floor at ninety percent of spot through Monday's open. I pick the strike, the expiry, and the number of shares. The quote on the right is computed onchain by a Rust contract on Arbitrum Stylus: it walks the feed's own round history, measures realized volatility over open-market hours, and charges the closed hours at a multiple. You can see exactly how much of the tenor is closed market, the collateral the vault locks, and the breakeven."
+    },
+    {
+      "id": "d3",
+      "text": "Buying is one approval and one transaction. The premium goes straight into the Tesla writer vault, the collateral is locked, and I receive an ERC-1155 position. Every position is fully collateralized at the moment of sale."
+    },
+    {
+      "id": "d4",
+      "text": "On the Positions tab, here is the position I just bought, and an earlier one that has now expired. Anyone can settle it, and the contract uses the first feed print at or after expiry, walking back the round history so nobody can pick a more convenient price. Then I claim: the payout, if any, is paid in stablecoins, and the rest of the collateral goes back to the writers."
+    },
+    {
+      "id": "d5",
+      "text": "The other side of the market is the Earn tab. Writers deposit stablecoins into a per-stock vault and every premium lifts the share price. Utilization is capped so exits stay liquid. Here the vault has already earned premiums from the positions we sold. That is AfterHours: weekend-gap protection for tokenized stocks, priced onchain, on Robinhood Chain."
+    }
+  ]
+}

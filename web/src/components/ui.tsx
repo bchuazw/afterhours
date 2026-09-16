@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { explorerAddress, explorerTx } from "@/lib/chain";
 import { shortAddr, shortHash } from "@/lib/format";
+import { useMounted } from "@/lib/hooks/useNow";
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return <div className={`card p-4 sm:p-5 ${className}`}>{children}</div>;
@@ -28,11 +29,15 @@ export function Stat({
   tone?: "pos" | "neg" | "warn" | "accent";
 }) {
   const toneCls = tone === "pos" ? "text-pos" : tone === "neg" ? "text-neg" : tone === "warn" ? "text-warn" : tone === "accent" ? "text-accent" : "";
+  // Loading state depends on wallet/query state that only exists on the client; render the
+  // server-safe fallback until mounted so hydration matches.
+  const mounted = useMounted();
+  const showSkeleton = mounted && loading;
   return (
     <div className={`min-w-0 ${className}`}>
       <div className="label">{label}</div>
-      <div className={`num mt-1 text-lg leading-tight ${toneCls}`}>{loading ? <Skeleton className="h-5 w-20" /> : value}</div>
-      {sub !== undefined && <div className="mt-0.5 text-xs text-muted">{loading ? <Skeleton className="h-3 w-16" /> : sub}</div>}
+      <div className={`num mt-1 text-lg leading-tight ${toneCls}`}>{showSkeleton ? <Skeleton className="h-5 w-20" /> : value}</div>
+      {sub !== undefined && <div className="mt-0.5 text-xs text-muted">{showSkeleton ? <Skeleton className="h-3 w-16" /> : sub}</div>}
     </div>
   );
 }
