@@ -17,6 +17,20 @@ const executablePath = [
 ].filter(Boolean).find((p) => existsSync(p));
 const b = await chromium.launch({ headless: true, executablePath });
 const page = await b.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
+// Optionally act as a specific burner account (local dev node testing).
+if (process.env.BURNER_KEY) {
+  const key = process.env.BURNER_KEY;
+  const connected = process.env.BURNER_CONNECTED ?? "1";
+  await page.addInitScript(
+    ([k, c]) => {
+      try {
+        window.localStorage.setItem("afterhours.burner.key", k);
+        window.localStorage.setItem("afterhours.burner.connected", c);
+      } catch {}
+    },
+    [key, connected],
+  );
+}
 const errors = [];
 page.on("console", (m) => m.type() === "error" && errors.push(m.text()));
 page.on("pageerror", (e) => errors.push(e.message));
