@@ -39,17 +39,27 @@ async function readRound(feed: Address, roundId?: bigint): Promise<Round | null>
   }
 }
 
-/** Collect mainnet rounds with roundId > `after`, newest-first walk, returned oldest-first. */
+/** Collect mainnet rounds with roundId > `after`, returned oldest-first. Uses Multicall3 in chunks. */
 async function collect(feed: Address, after: bigint, max: number): Promise<Round[]> {
   const latest = await readRound(feed);
   if (!latest) return [];
-  const out: Round[] = [];
-  let id = latest.roundId;
-  while (id > after && out.length < max) {
-    const r = id === latest.roundId ? latest : await readRound(feed, id);
-    if (r) out.push(r);
-    else if (id !== latest.roundId) break; // phase boundary / missing round
-    id -= 1n;
+  const out: Round[] = [latest];
+  let id = latest.roundId - 1n;
+  const CHUNK = 100n;
+  outer: while (id > after && out.length < max) {
+    const n = Number([CHUNK, id - after, BigInt(max - out.length)].reduce((a, b) => (a < b ? a : b)));
+    const ids = Array.from({ length: n }, (_, i) => id - BigInt(i));
+    const res = await mainnet.multicall({
+      contracts: ids.map((rid) => ({ address: feed, abi: aggregatorAbi, functionName: "getRoundData" as const, args: [rid] })),
+      allowFailure: true,
+    });
+    for (let i = 0; i < res.length; i++) {
+      const r = res[i];
+      if (r.status !== "success") break outer; // phase boundary / missing round
+      const [rid, answer, , updatedAt] = r.result;
+      if (answer > 0n && updatedAt > 0n) out.push({ roundId: rid, answer, updatedAt });
+    }
+    id -= BigInt(n);
   }
   return out.reverse();
 }

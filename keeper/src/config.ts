@@ -12,13 +12,22 @@ export const robinhoodMainnet = defineChain({
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
   rpcUrls: { default: { http: [process.env.MAINNET_RPC ?? "https://rpc.mainnet.chain.robinhood.com"] } },
   blockExplorers: { default: { name: "Blockscout", url: "https://robinhoodchain.blockscout.com" } },
+  contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" } },
 });
 
+/// Target chain for the mirrors/market. Defaults to Robinhood Chain testnet; set CHAIN_ID=412346 and
+/// TESTNET_RPC=http://127.0.0.1:8547 to drive a local Nitro dev node.
+export const TARGET_CHAIN_ID = Number(process.env.CHAIN_ID ?? 46630);
+
 export const robinhoodTestnet = defineChain({
-  id: 46630,
-  name: "Robinhood Chain Testnet",
+  id: TARGET_CHAIN_ID,
+  name: TARGET_CHAIN_ID === 46630 ? "Robinhood Chain Testnet" : `chain-${TARGET_CHAIN_ID}`,
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: { default: { http: [process.env.TESTNET_RPC ?? "https://rpc.testnet.chain.robinhood.com"] } },
+  rpcUrls: {
+    default: {
+      http: [process.env.TESTNET_RPC ?? (TARGET_CHAIN_ID === 46630 ? "https://rpc.testnet.chain.robinhood.com" : "http://127.0.0.1:8547")],
+    },
+  },
   blockExplorers: { default: { name: "Blockscout", url: "https://explorer.testnet.chain.robinhood.com" } },
   testnet: true,
 });
@@ -42,7 +51,7 @@ export type Deployment = {
   underlyings: Record<string, { id: number; symbol: string; feed: Address; vault: Address; stockToken: Address }>;
 };
 
-export function loadDeployment(chainId = 46630): Deployment {
+export function loadDeployment(chainId = TARGET_CHAIN_ID): Deployment {
   const p = join(here, "..", "..", "contracts", "deployments", `${chainId}.json`);
   return JSON.parse(readFileSync(p, "utf8")) as Deployment;
 }

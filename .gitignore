@@ -28,3 +28,5 @@ dist/
 media/raw/
 media/out/
 media/node_modules/
+contracts/deployments/412346.json
+contracts/broadcast/**/412346/
