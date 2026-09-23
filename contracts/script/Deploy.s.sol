@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AfterHoursMarket} from "../src/AfterHoursMarket.sol";
 import {ProtectionVault} from "../src/ProtectionVault.sol";
@@ -58,18 +59,29 @@ contract Deploy is Script {
         }
         vm.stopBroadcast();
 
+        console.log("market", address(market));
+        console.log("usd", address(usd));
+
+        // Only a real broadcast produces addresses worth recording; a dry run must not leave a
+        // deployment file behind (the keeper cron and web build consume these).
+        if (!vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) && !vm.isContext(VmSafe.ForgeContext.ScriptResume)) {
+            console.log("dry run: deployment file not written");
+            return;
+        }
+
         string memory json = "deploy";
         vm.serializeUint(json, "chainId", block.chainid);
         vm.serializeAddress(json, "deployer", deployer);
         vm.serializeAddress(json, "usd", address(usd));
         vm.serializeAddress(json, "pricer", pricer);
         vm.serializeAddress(json, "market", address(market));
-        vm.serializeUint(json, "deployBlock", block.number);
+        // On Arbitrum chains `block.number` is the parent-chain block estimate, not the L2 height,
+        // so it cannot seed eth_getLogs ranges. script/finalize-deployment.mjs replaces this with
+        // the L2 block of the first broadcast receipt.
+        vm.serializeUint(json, "deployBlock", 0);
         string memory out = vm.serializeString(json, "underlyings", usOut);
         string memory path = string.concat("deployments/", vm.toString(block.chainid), ".json");
         vm.writeJson(out, path);
-        console.log("market", address(market));
-        console.log("usd", address(usd));
         console.log("wrote", path);
     }
 
