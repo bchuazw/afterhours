@@ -13,7 +13,8 @@ import { privateKeyToAccount } from "viem/accounts";
 import { MAINNET_FEEDS, loadDeployment, relayerKey, robinhoodMainnet, robinhoodTestnet } from "./config.js";
 import { aggregatorAbi, feedMirrorAbi } from "./abi.js";
 
-const BACKFILL_ROUNDS = Number(process.env.BACKFILL_ROUNDS ?? 400);
+// The pricer reads `lookback` = 120 rounds; a little extra covers the settlement walk-back.
+const BACKFILL_ROUNDS = Number(process.env.BACKFILL_ROUNDS ?? 150);
 const BATCH = 60;
 const POLL_MS = Number(process.env.POLL_MS ?? 60_000);
 const once = process.argv.includes("--once");
