@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useAccount, useBalance, useConnect, useDisconnect } from "wagmi";
 import { formatEther } from "viem";
 import { BURNER_ID, burnerAddress, exportBurnerKey, resetBurner } from "@/lib/burner";
-import { robinhoodTestnet } from "@/lib/chain";
+import { targetChain } from "@/lib/chain";
 import { shortAddr } from "@/lib/format";
 import { useMounted } from "@/lib/hooks/useNow";
 import { AddressLink, CopyButton } from "./ui";
@@ -72,7 +72,7 @@ function WalletModal({ onClose }: { onClose: () => void }) {
               disabled={!injected || isPending}
               onClick={async () => {
                 if (!injected) return;
-                await connectAsync({ connector: injected, chainId: robinhoodTestnet.id }).catch(() => {});
+                await connectAsync({ connector: injected, chainId: targetChain.id }).catch(() => {});
                 onClose();
               }}
             >
@@ -84,7 +84,7 @@ function WalletModal({ onClose }: { onClose: () => void }) {
               disabled={!burner || isPending}
               onClick={async () => {
                 if (!burner) return;
-                await connectAsync({ connector: burner, chainId: robinhoodTestnet.id }).catch(() => {});
+                await connectAsync({ connector: burner, chainId: targetChain.id }).catch(() => {});
                 onClose();
               }}
             >
@@ -131,7 +131,7 @@ function WalletModal({ onClose }: { onClose: () => void }) {
 }
 
 function ConnectedPanel({ address, isBurner, onDisconnect }: { address: `0x${string}`; isBurner: boolean; onDisconnect: () => void }) {
-  const { data: eth } = useBalance({ address, chainId: robinhoodTestnet.id, query: { refetchInterval: 15_000 } });
+  const { data: eth } = useBalance({ address, chainId: targetChain.id, query: { refetchInterval: 15_000 } });
   const { data: tusd } = useTusdBalance(address);
   return (
     <div className="space-y-3">

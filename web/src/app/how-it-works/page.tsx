@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { deployment, underlyingList, isZero } from "@/lib/deployment";
-import { explorerAddress } from "@/lib/chain";
+import { explorerAddress, CHAIN_NAME } from "@/lib/chain";
 import { LifecycleDiagram } from "@/features/how/LifecycleDiagram";
 
 export const metadata: Metadata = { title: "How it works · AfterHours" };
@@ -113,7 +113,7 @@ export default function Page() {
       </section>
 
       <section className="card p-5">
-        <h2 className="text-base font-semibold">Contracts · Robinhood Chain Testnet (chainId {deployment.chainId})</h2>
+        <h2 className="text-base font-semibold">Contracts · {CHAIN_NAME} (chainId {deployment.chainId})</h2>
         <div className="mt-2 divide-y divide-line">
           <Addr label="AfterHoursMarket" address={deployment.market} />
           <Addr label="Stylus pricer" address={deployment.pricer} />

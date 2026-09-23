@@ -1,7 +1,8 @@
 name: keeper
 
 # Mirrors Robinhood Chain mainnet Chainlink equity feeds onto the testnet FeedMirrors and settles
-# expired series. Runs every 15 minutes; the market is 24/5 so most weekend runs are no-ops.
+# expired series, for every chain that has a deployment file. Runs every 15 minutes; the market is
+# 24/5 so most weekend runs are no-ops.
 on:
   schedule:
     - cron: "*/15 * * * *"
@@ -15,12 +16,21 @@ jobs:
   relay:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      max-parallel: 1 # same relayer key on every chain; keep nonces simple
+      matrix:
+        chain: [46630, 421614]
+    env:
+      CHAIN_ID: ${{ matrix.chain }}
+      RELAYER_KEY: ${{ secrets.RELAYER_KEY }}
+      BACKFILL_ROUNDS: "150"
     steps:
       - uses: actions/checkout@v4
       - id: dep
         name: check deployment exists
         run: |
-          if [ -f contracts/deployments/46630.json ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "no deployment yet; skipping"; echo "ok=false" >> "$GITHUB_OUTPUT"; fi
+          if [ -f "contracts/deployments/${CHAIN_ID}.json" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "no deployment for ${CHAIN_ID}; skipping"; echo "ok=false" >> "$GITHUB_OUTPUT"; fi
       - if: steps.dep.outputs.ok == 'true'
         uses: pnpm/action-setup@v4
         with:
@@ -38,11 +48,7 @@ jobs:
         name: mirror feeds
         run: pnpm mirror:once
         working-directory: keeper
-        env:
-          RELAYER_KEY: ${{ secrets.RELAYER_KEY }}
       - if: steps.dep.outputs.ok == 'true'
         name: settle expired series
         run: pnpm tsx src/settle.ts --once
         working-directory: keeper
-        env:
-          RELAYER_KEY: ${{ secrets.RELAYER_KEY }}

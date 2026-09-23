@@ -46,9 +46,10 @@ export function useTx() {
           args: params.args,
           value: params.value,
         } as Parameters<typeof writeContractAsync>[0]);
+        const txUrl = explorerTx(hash);
         toast.update(id, {
           description: `Submitted ${shortHash(hash)}. Waiting for confirmation…`,
-          link: { href: explorerTx(hash), label: "View on explorer" },
+          ...(txUrl ? { link: { href: txUrl, label: "View on explorer" } } : {}),
         });
         if (!client) throw new Error("No RPC client");
         const receipt = await client.waitForTransactionReceipt({ hash, confirmations: 1 });

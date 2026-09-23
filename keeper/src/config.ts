@@ -15,20 +15,22 @@ export const robinhoodMainnet = defineChain({
   contracts: { multicall3: { address: "0xcA11bde05977b3631167028862bE2a173976CA11" } },
 });
 
-/// Target chain for the mirrors/market. Defaults to Robinhood Chain testnet; set CHAIN_ID=412346 and
-/// TESTNET_RPC=http://127.0.0.1:8547 to drive a local Nitro dev node.
+/// Target chain for the mirrors/market: Robinhood Chain testnet (46630, default), Arbitrum Sepolia
+/// (421614) or a local Nitro dev node (412346). TESTNET_RPC overrides the RPC.
 export const TARGET_CHAIN_ID = Number(process.env.CHAIN_ID ?? 46630);
+
+const TARGETS: Record<number, { name: string; rpc: string }> = {
+  46630: { name: "Robinhood Chain Testnet", rpc: "https://rpc.testnet.chain.robinhood.com" },
+  421614: { name: "Arbitrum Sepolia", rpc: "https://sepolia-rollup.arbitrum.io/rpc" },
+  412346: { name: "Local Nitro dev node", rpc: "http://127.0.0.1:8547" },
+};
+const target = TARGETS[TARGET_CHAIN_ID] ?? { name: `chain-${TARGET_CHAIN_ID}`, rpc: "http://127.0.0.1:8547" };
 
 export const robinhoodTestnet = defineChain({
   id: TARGET_CHAIN_ID,
-  name: TARGET_CHAIN_ID === 46630 ? "Robinhood Chain Testnet" : `chain-${TARGET_CHAIN_ID}`,
+  name: target.name,
   nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-  rpcUrls: {
-    default: {
-      http: [process.env.TESTNET_RPC ?? (TARGET_CHAIN_ID === 46630 ? "https://rpc.testnet.chain.robinhood.com" : "http://127.0.0.1:8547")],
-    },
-  },
-  blockExplorers: { default: { name: "Blockscout", url: "https://explorer.testnet.chain.robinhood.com" } },
+  rpcUrls: { default: { http: [process.env.TESTNET_RPC ?? target.rpc] } },
   testnet: true,
 });
 
