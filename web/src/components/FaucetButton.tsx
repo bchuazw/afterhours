@@ -12,12 +12,12 @@ const AMOUNT = parseUnits("10000", USD_DECIMALS);
 /** Mints 10,000 tUSD from the open MockERC20 faucet to the connected wallet. */
 export function FaucetButton({ className = "btn btn-sm" }: { className?: string }) {
   const { address } = useAccount();
-  const { send, busy } = useTx();
+  const { send, busy, wrongChain } = useTx();
   if (!address) return null;
   return (
     <button
       className={className}
-      disabled={busy || !isDeployed}
+      disabled={busy || !isDeployed || wrongChain}
       onClick={() =>
         send("Mint 10,000 tUSD", {
           address: deployment.usd,

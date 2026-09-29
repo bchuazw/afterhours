@@ -35,6 +35,13 @@ export const feedMirrorAbi = [
   { type: "function", name: "oraclePaused", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
   {
     type: "function",
+    name: "setPaused",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "paused", type: "bool" }],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "pushRound",
     stateMutability: "nonpayable",
     inputs: [
@@ -55,8 +62,17 @@ export const feedMirrorAbi = [
     ],
     outputs: [],
   },
+  { type: "error", name: "NotRelayer", inputs: [] },
+  { type: "error", name: "BadRound", inputs: [] },
+  { type: "error", name: "NoData", inputs: [] },
 ] as const;
 
+/// Robinhood Stock Token (mainnet). The keeper only needs the corporate-action pause flag.
+export const stockTokenAbi = [
+  { type: "function", name: "oraclePaused", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
+] as const;
+
+/// The subset of AfterHoursMarket the keeper uses. Errors are listed so reverts decode by name.
 export const marketAbi = [
   {
     type: "event",
@@ -75,15 +91,6 @@ export const marketAbi = [
     ],
   },
   {
-    type: "event",
-    name: "SeriesSettled",
-    inputs: [
-      { name: "seriesId", type: "uint256", indexed: true },
-      { name: "settlePrice", type: "uint256", indexed: false },
-      { name: "fallbackUsed", type: "bool", indexed: false },
-    ],
-  },
-  {
     type: "function",
     name: "getSeries",
     stateMutability: "view",
@@ -94,10 +101,14 @@ export const marketAbi = [
         components: [
           { name: "underlyingId", type: "uint32" },
           { name: "expiry", type: "uint64" },
+          { name: "grace", type: "uint64" },
+          { name: "settled", type: "bool" },
           { name: "strike", type: "uint256" },
           { name: "openUnits", type: "uint256" },
+          { name: "locked", type: "uint256" },
+          { name: "premium", type: "uint256" },
           { name: "settlePrice", type: "uint256" },
-          { name: "settled", type: "bool" },
+          { name: "owed", type: "uint256" },
         ],
       },
     ],
@@ -105,20 +116,26 @@ export const marketAbi = [
   { type: "function", name: "settle", stateMutability: "nonpayable", inputs: [{ name: "id", type: "uint256" }], outputs: [] },
   {
     type: "function",
-    name: "quote",
-    stateMutability: "view",
+    name: "settleAt",
+    stateMutability: "nonpayable",
     inputs: [
-      { name: "underlyingId", type: "uint32" },
-      { name: "strike", type: "uint256" },
-      { name: "expiry", type: "uint64" },
-      { name: "units", type: "uint256" },
+      { name: "id", type: "uint256" },
+      { name: "roundId", type: "uint80" },
     ],
-    outputs: [
-      { name: "premium", type: "uint256" },
-      { name: "collateral", type: "uint256" },
-      { name: "spot", type: "uint256" },
-      { name: "vol", type: "uint256" },
-      { name: "closedSeconds", type: "uint256" },
+    outputs: [],
+  },
+  { type: "error", name: "SettleWalkTooLong", inputs: [] },
+  {
+    type: "error",
+    name: "AwaitingPostExpiryPrint",
+    inputs: [
+      { name: "expiry", type: "uint64" },
+      { name: "lastUpdate", type: "uint256" },
     ],
   },
+  { type: "error", name: "FeedPaused", inputs: [] },
+  { type: "error", name: "NotExpired", inputs: [] },
+  { type: "error", name: "AlreadySettled", inputs: [] },
+  { type: "error", name: "NotSettled", inputs: [] },
+  { type: "error", name: "InvalidAnswer", inputs: [] },
 ] as const;

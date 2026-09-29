@@ -8,11 +8,14 @@ import {IAggregatorV3, IPausableFeed} from "./interfaces/IAggregatorV3.sol";
 /// @notice Chainlink-compatible aggregator that mirrors a mainnet tokenized-equity feed onto a network
 ///         where that feed does not exist (Robinhood Chain testnet). A relayer replays the mainnet
 ///         rounds verbatim (same roundId / answer / updatedAt), so consumers see the real 24/5 session
-///         behaviour, including frozen weekend prices. On mainnet the market points straight at the
-///         Chainlink proxy and this contract is not deployed.
+///         behaviour, including frozen weekend prices and the invalid, mis-scaled genesis-era answers the
+///         market must skip. On mainnet the market points straight at the Chainlink proxy and this
+///         contract is not deployed.
+/// @dev Each round is packed into a single storage slot (int192 answer + uint64 updatedAt), halving the
+///      relay's storage writes. Answers that do not fit in an int192 are rejected.
 contract FeedMirror is IAggregatorV3, IPausableFeed, Ownable {
     struct Round {
-        int256 answer;
+        int192 answer;
         uint64 updatedAt;
     }
 
@@ -55,8 +58,8 @@ contract FeedMirror is IAggregatorV3, IPausableFeed, Ownable {
     /// @notice Push a single round. Rounds may be backfilled out of order (historical replay), but
     ///         `latestRound` only ever moves forward.
     function pushRound(uint80 roundId, int256 answer, uint64 updatedAt) public onlyRelayer {
-        if (roundId == 0 || answer <= 0 || updatedAt == 0) revert BadRound();
-        _rounds[roundId] = Round(answer, updatedAt);
+        if (roundId == 0 || answer <= 0 || answer > type(int192).max || updatedAt == 0) revert BadRound();
+        _rounds[roundId] = Round(int192(answer), updatedAt);
         if (roundId > latestRound) latestRound = roundId;
         emit RoundPushed(roundId, answer, updatedAt);
     }

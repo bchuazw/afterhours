@@ -87,25 +87,22 @@ contract Deploy is Script {
 
     function _params() internal pure returns (AfterHoursMarket.PricingParams memory) {
         return AfterHoursMarket.PricingParams({
-            lookback: 120,
-            volFloor: 0.35e18,
-            volCap: 3e18,
-            closedVolMult: 1.5e18,
-            spreadBps: 1_000
+            lookback: 120, volFloor: 0.35e18, volCap: 3e18, closedVolMult: 1.5e18, spreadBps: 1_000
         });
     }
 
     function _deployUnderlying(U memory u, uint256 i, address deployer) internal returns (string memory usOut) {
         FeedMirror feed = new FeedMirror(u.feedDesc, 8, relayer);
-        uint32 id = market.addUnderlying(
-            u.symbol,
-            u.stockToken,
-            IAggregatorV3(address(feed)),
-            _params(),
+        // v2 vaults are deployed next to the market (keeps the market under the 24 KiB limit) and bound
+        // to it by constructor: the market checks market / underlyingId / asset in addUnderlying.
+        ProtectionVault vault = new ProtectionVault(
+            IERC20(address(usd)),
             string.concat("AfterHours ", u.symbol, " Writer"),
-            string.concat("ah", u.symbol)
+            string.concat("ah", u.symbol),
+            address(market),
+            market.underlyingCount() + 1
         );
-        ProtectionVault vault = market.getUnderlying(id).vault;
+        uint32 id = market.addUnderlying(u.symbol, u.stockToken, IAggregatorV3(address(feed)), _params(), vault);
         usd.approve(address(vault), seed);
         vault.deposit(seed, deployer);
         console.log(u.symbol, "feed", address(feed));

@@ -47,7 +47,7 @@ export function fmtBps(bps: bigint | number | undefined | null, digits = 1): str
   return `${(Number(bps) / 100).toFixed(digits)}%`;
 }
 
-/** 18-decimal units to "1.25" shares. */
+/** 18-decimal position units to "1.25" (1e18 = protection on one Stock Token). */
 export function fmtUnits(v: bigint | undefined | null, digits = 4): string {
   if (v === undefined || v === null) return "—";
   const n = Number(formatUnits(v, UNIT_DECIMALS));

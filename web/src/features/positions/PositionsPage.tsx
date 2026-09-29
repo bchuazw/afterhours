@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useAccount, useReadContract, useReadContracts } from "wagmi";
 import { zeroAddress } from "viem";
 import { marketAbi } from "@/abi";
 import { deployment, isDeployed, underlyingById } from "@/lib/deployment";
 import { useClaimed, useProtectionBought, type BoughtLog } from "@/lib/hooks/useLogs";
 import { useNow, useMounted } from "@/lib/hooks/useNow";
-import { useTx } from "@/lib/hooks/useTx";
+import { useTx, WRONG_CHAIN_HINT, type TxFailure } from "@/lib/hooks/useTx";
 import { fmtDuration, fmtPrice, fmtTime, fmtUnits, fmtUsd } from "@/lib/format";
 import { Card, ErrorNote, InfoNote, Pill, Skeleton } from "@/components/ui";
 
@@ -18,25 +18,32 @@ type Position = {
   underlyingId: number;
   strike: bigint;
   expiry: number;
+  grace: number;
   balance: bigint;
   settled: boolean;
   settlePrice: bigint;
   openUnits: bigint;
+  owed: bigint; // series-wide payout escrowed in the market for unclaimed units
   status: Status;
-  payout: bigint; // for `balance` units
+  claimable: bigint; // pro-rata share of `owed` for `balance` units
   claimedPayout: bigint; // historical, from Claimed logs
   boughtUnits: bigint;
   premiumPaid: bigint;
 };
 
-/** Mirrors AfterHoursMarket._toAsset for a 6-decimal asset. */
-const toAsset = (price8: bigint, units18: bigint) => (price8 * units18 * 1_000_000n) / 10n ** 26n;
+/** Mirrors AfterHoursMarket.claim: the last claimant takes the remainder, others are paid pro rata (floor). */
+const proRata = (owed: bigint, units: bigint, openUnits: bigint) =>
+  units === 0n || openUnits === 0n ? 0n : units === openUnits ? owed : (owed * units) / openUnits;
+
+/** Errors from settle() that deserve a note on the card, not just a toast. */
+const SETTLE_NOTES = new Set(["SettleWalkTooLong", "AwaitingPostExpiryPrint", "FeedPaused"]);
 
 export function PositionsPage() {
   const mounted = useMounted();
   const { address, isConnected } = useAccount();
   const now = useNow(1000);
-  const { send, busy } = useTx();
+  const { send, busy, wrongChain } = useTx();
+  const [notes, setNotes] = useState<Record<string, string>>({});
 
   // Discover every series that has ever been bought; the wallet may hold transferred positions too.
   const all = useProtectionBought(undefined);
@@ -92,23 +99,25 @@ export function PositionsPage() {
       const hasClaim = claimedBy.has(s.seriesId.toString());
       if (balance === 0n && !s.mine && !hasClaim) return;
       const expiry = Number(info.expiry);
+      const claimable = info.settled ? proRata(info.owed, balance, info.openUnits) : 0n;
       let status: Status;
       if (balance === 0n) status = "claimed";
-      else if (info.settled) status = info.settlePrice < info.strike ? "itm" : "otm";
+      else if (info.settled) status = info.settlePrice < info.strike && info.owed > 0n ? "itm" : "otm";
       else if (t >= expiry) status = "awaiting";
       else status = "open";
-      const payout = info.settled && info.settlePrice < info.strike ? toAsset(info.strike - info.settlePrice, balance) : 0n;
       out.push({
         seriesId: s.seriesId,
         underlyingId: info.underlyingId,
         strike: info.strike,
         expiry,
+        grace: Number(info.grace),
         balance,
         settled: info.settled,
         settlePrice: info.settlePrice,
         openUnits: info.openUnits,
+        owed: info.owed,
         status,
-        payout,
+        claimable,
         claimedPayout: claimedBy.get(s.seriesId.toString()) ?? 0n,
         boughtUnits: s.myUnits,
         premiumPaid: s.myPremium,
@@ -118,15 +127,24 @@ export function PositionsPage() {
     return out.sort((a, b) => rank[a.status] - rank[b.status] || a.expiry - b.expiry);
   }, [balanceRead.data, seriesReads.data, address, series, claimed.data, now]);
 
-  const settle = (p: Position) =>
-    send(`Settle ${underlyingById(p.underlyingId)?.symbol ?? ""} series`, {
-      address: deployment.market,
-      abi: marketAbi,
-      functionName: "settle",
-      args: [p.seriesId],
+  const noteFor = (p: Position) => (f: TxFailure) => {
+    if (f.errorName && SETTLE_NOTES.has(f.errorName)) setNotes((n) => ({ ...n, [p.seriesId.toString()]: f.message }));
+  };
+
+  const settle = async (p: Position) => {
+    setNotes((n) => {
+      const next = { ...n };
+      delete next[p.seriesId.toString()];
+      return next;
     });
+    await send(
+      `Settle ${underlyingById(p.underlyingId)?.symbol ?? ""} series`,
+      { address: deployment.market, abi: marketAbi, functionName: "settle", args: [p.seriesId] },
+      { onError: noteFor(p) },
+    );
+  };
   const claim = (p: Position) =>
-    send(`Claim ${fmtUsd(p.payout)}`, {
+    send(p.claimable > 0n ? `Claim ${fmtUsd(p.claimable)}` : "Burn worthless position", {
       address: deployment.market,
       abi: marketAbi,
       functionName: "claim",
@@ -140,10 +158,18 @@ export function PositionsPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Your positions</h1>
         <p className="mt-1 max-w-2xl text-sm text-muted">
-          Protection positions are ERC-1155 tokens keyed by (underlying, strike, expiry). After expiry anyone can settle
-          the series at the first feed print; you then claim your payout and the remaining collateral returns to writers.
+          Protection positions are ERC-1155 tokens keyed by (underlying, strike, expiry); one unit protects one Stock
+          Token. After expiry anyone can settle the series at the first valid feed print at or after expiry. Settlement
+          moves the series&apos; payout into escrow and returns the rest of the collateral to writers, so out-of-the-money
+          positions need no claim; in-the-money holders claim their pro-rata share.
         </p>
       </div>
+
+      {mounted && wrongChain && (
+        <Card>
+          <InfoNote>{WRONG_CHAIN_HINT}</InfoNote>
+        </Card>
+      )}
 
       {!mounted || !isConnected ? (
         <Card>
@@ -177,7 +203,15 @@ export function PositionsPage() {
       ) : (
         <div className="grid gap-3">
           {positions.map((p) => (
-            <PositionCard key={p.seriesId.toString()} p={p} now={now} busy={busy} onSettle={() => settle(p)} onClaim={() => claim(p)} />
+            <PositionCard
+              key={p.seriesId.toString()}
+              p={p}
+              now={now}
+              disabled={busy || wrongChain}
+              note={notes[p.seriesId.toString()]}
+              onSettle={() => settle(p)}
+              onClaim={() => claim(p)}
+            />
           ))}
         </div>
       )}
@@ -188,17 +222,32 @@ export function PositionsPage() {
 function StatusPill({ s }: { s: Status }) {
   switch (s) {
     case "open": return <Pill tone="accent">Open</Pill>;
-    case "awaiting": return <Pill tone="closed">Expired · awaiting print</Pill>;
+    case "awaiting": return <Pill tone="closed">Expired · awaiting settlement</Pill>;
     case "itm": return <Pill tone="live">Settled · in the money</Pill>;
-    case "otm": return <Pill>Settled · out of the money</Pill>;
+    case "otm": return <Pill>Settled · worthless</Pill>;
     case "claimed": return <Pill dot={false}>Claimed</Pill>;
   }
 }
 
-function PositionCard({ p, now, busy, onSettle, onClaim }: { p: Position; now: number; busy: boolean; onSettle: () => void; onClaim: () => void }) {
+function PositionCard({
+  p,
+  now,
+  disabled,
+  note,
+  onSettle,
+  onClaim,
+}: {
+  p: Position;
+  now: number;
+  disabled: boolean;
+  note?: string;
+  onSettle: () => void;
+  onClaim: () => void;
+}) {
   const u = underlyingById(p.underlyingId);
   const t = now || Math.floor(Date.now() / 1000);
   const remaining = p.expiry - t;
+  const fallbackAt = p.expiry + p.grace;
   return (
     <Card>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -220,13 +269,18 @@ function PositionCard({ p, now, busy, onSettle, onClaim }: { p: Position; now: n
         </div>
         <div className="flex gap-2">
           {p.status === "awaiting" && (
-            <button className="btn btn-primary btn-sm" disabled={busy} onClick={onSettle}>
+            <button className="btn btn-primary btn-sm" disabled={disabled} onClick={onSettle}>
               Settle
             </button>
           )}
-          {(p.status === "itm" || p.status === "otm") && (
-            <button className="btn btn-primary btn-sm" disabled={busy} onClick={onClaim}>
-              {p.status === "itm" ? `Claim ${fmtUsd(p.payout)}` : "Claim (release collateral)"}
+          {p.status === "itm" && (
+            <button className="btn btn-primary btn-sm" disabled={disabled} onClick={onClaim}>
+              Claim {fmtUsd(p.claimable)}
+            </button>
+          )}
+          {p.status === "otm" && (
+            <button className="btn btn-sm" disabled={disabled} onClick={onClaim} title="Optional: burns the worthless position tokens. Pays nothing.">
+              Burn position
             </button>
           )}
         </div>
@@ -234,7 +288,7 @@ function PositionCard({ p, now, busy, onSettle, onClaim }: { p: Position; now: n
 
       <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-5">
         <div>
-          <div className="label">Units held</div>
+          <div className="label">Tokens protected</div>
           <div className="num mt-1">{fmtUnits(p.balance, 4)}</div>
         </div>
         <div>
@@ -246,22 +300,41 @@ function PositionCard({ p, now, busy, onSettle, onClaim }: { p: Position; now: n
           <div className="num mt-1">{p.settled ? fmtPrice(p.settlePrice) : <span className="text-dim">pending</span>}</div>
         </div>
         <div>
-          <div className="label">Payout</div>
-          <div className={`num mt-1 ${p.payout > 0n ? "text-pos" : ""}`}>
-            {p.status === "claimed" ? fmtUsd(p.claimedPayout) : p.settled ? fmtUsd(p.payout) : <span className="text-dim">—</span>}
+          <div className="label">{p.status === "claimed" ? "Claimed" : "Your payout"}</div>
+          <div className={`num mt-1 ${p.claimable > 0n || p.claimedPayout > 0n ? "text-pos" : ""}`}>
+            {p.status === "claimed" ? fmtUsd(p.claimedPayout) : p.settled ? fmtUsd(p.claimable) : <span className="text-dim">—</span>}
           </div>
         </div>
         <div>
-          <div className="label">Series open units</div>
-          <div className="num mt-1 text-muted">{fmtUnits(p.openUnits, 2)}</div>
+          <div className="label">Series escrow</div>
+          <div className="num mt-1 text-muted">
+            {p.settled ? fmtUsd(p.owed) : <span className="text-dim">—</span>}
+            <span className="text-dim"> · {fmtUnits(p.openUnits, 2)} open</span>
+          </div>
         </div>
       </div>
-      {p.status === "awaiting" && (
+
+      {p.status === "otm" && (
         <p className="mt-3 text-[11px] leading-relaxed text-dim">
-          Settlement uses the first feed print at or after expiry. If the feed has not printed since expiry (e.g. over a
-          weekend), settle will revert with AwaitingPostExpiryPrint until it does; after the grace period the last price is used.
+          Settled worthless, nothing to claim: the settle price was at or above the strike, and all collateral went back
+          to the writers at settlement. Burning the position is optional.
         </p>
       )}
+      {p.status === "itm" && (
+        <p className="mt-3 text-[11px] leading-relaxed text-dim">
+          Pays max(strike − settle, 0) per token. Your {fmtUnits(p.balance, 4)} of {fmtUnits(p.openUnits, 4)} open units
+          {p.balance === p.openUnits ? " take the whole escrow" : " take a pro-rata share of the escrow"}.
+        </p>
+      )}
+      {p.status === "awaiting" && (
+        <p className="mt-3 text-[11px] leading-relaxed text-dim">
+          Settlement uses the first valid feed print at or after expiry. Until one arrives, settle reverts with
+          AwaitingPostExpiryPrint; after this series&apos; grace period ({fmtDuration(p.grace)}, from {fmtTime(fallbackAt)})
+          the latest valid price is used so collateral never strands. If the walk back to that print is too long, the
+          keeper settles with a round hint (settleAt).
+        </p>
+      )}
+      {note && <div className="mt-3 rounded-lg border border-warn/30 bg-warn/5 px-3 py-2 text-xs leading-relaxed text-warn">{note}</div>}
     </Card>
   );
 }

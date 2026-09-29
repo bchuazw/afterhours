@@ -22,6 +22,11 @@ export const vaultAbi = [
         "name": "market_",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "underlyingId_",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "stateMutability": "nonpayable"
@@ -121,6 +126,19 @@ export const vaultAbi = [
   },
   {
     "type": "function",
+    "name": "capital",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "convertToAssets",
     "inputs": [
       {
@@ -196,6 +214,19 @@ export const vaultAbi = [
   },
   {
     "type": "function",
+    "name": "exitLiquidity",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "freeLiquidity",
     "inputs": [],
     "outputs": [
@@ -209,10 +240,41 @@ export const vaultAbi = [
   },
   {
     "type": "function",
+    "name": "isOpen",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "open",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "liability",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "liab",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "lock",
     "inputs": [
       {
-        "name": "amount",
+        "name": "collateral",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "premiumNet",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -251,7 +313,7 @@ export const vaultAbi = [
     "name": "maxDeposit",
     "inputs": [
       {
-        "name": "",
+        "name": "receiver",
         "type": "address",
         "internalType": "address"
       }
@@ -270,7 +332,7 @@ export const vaultAbi = [
     "name": "maxMint",
     "inputs": [
       {
-        "name": "",
+        "name": "receiver",
         "type": "address",
         "internalType": "address"
       }
@@ -358,24 +420,6 @@ export const vaultAbi = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "pay",
-    "inputs": [
-      {
-        "name": "to",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -484,10 +528,20 @@ export const vaultAbi = [
   },
   {
     "type": "function",
-    "name": "release",
+    "name": "settle",
     "inputs": [
       {
-        "name": "amount",
+        "name": "lockedAmt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "owed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "premiumNet",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -589,6 +643,32 @@ export const vaultAbi = [
   },
   {
     "type": "function",
+    "name": "underlyingId",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "unearnedPremium",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "utilizationBps",
     "inputs": [],
     "outputs": [
@@ -659,13 +739,25 @@ export const vaultAbi = [
     "name": "CollateralLocked",
     "inputs": [
       {
-        "name": "amount",
+        "name": "collateral",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "premium",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
         "name": "totalLocked",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "totalUnearned",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -675,16 +767,34 @@ export const vaultAbi = [
   },
   {
     "type": "event",
-    "name": "CollateralReleased",
+    "name": "CollateralSettled",
     "inputs": [
       {
-        "name": "amount",
+        "name": "unlocked",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owed",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "premiumEarned",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
         "name": "totalLocked",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "totalUnearned",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -716,25 +826,6 @@ export const vaultAbi = [
       },
       {
         "name": "shares",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "Payout",
-    "inputs": [
-      {
-        "name": "to",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -803,6 +894,11 @@ export const vaultAbi = [
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "BadSettle",
+    "inputs": []
   },
   {
     "type": "error",
@@ -993,11 +1089,6 @@ export const vaultAbi = [
   {
     "type": "error",
     "name": "OnlyMarket",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReleaseExceedsLocked",
     "inputs": []
   },
   {

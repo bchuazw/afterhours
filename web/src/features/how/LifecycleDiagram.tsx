@@ -1,10 +1,10 @@
-/** Static SVG of the position lifecycle: buy -> weekend freeze -> first print -> settle -> claim. */
+/** Static SVG of the position lifecycle: buy -> closed window (feeds dark) -> first print -> settle -> claim. */
 export function LifecycleDiagram() {
   const steps = [
-    { x: 60, title: "Buy", sub: "Fri, market open", detail: "premium in, collateral locked" },
-    { x: 260, title: "Feed frozen", sub: "Fri 20:00 → Sun 20:00 ET", detail: "token trades, feed does not" },
-    { x: 460, title: "First print", sub: "at / after expiry", detail: "settle(id) by anyone" },
-    { x: 660, title: "Claim", sub: "cash-settled", detail: "max(strike − print, 0) × units" },
+    { x: 80, title: "Buy", sub: "Fri, market open", detail: "premium in, collateral locked" },
+    { x: 260, title: "Feeds dark", sub: "Sat 00:00 → Mon 01:00 UTC", detail: "no sales, no expiries" },
+    { x: 460, title: "First print", sub: "at / after expiry", detail: "settle(id): payout to escrow" },
+    { x: 640, title: "Claim", sub: "cash-settled", detail: "max(strike − print, 0) per token" },
   ];
   return (
     <svg viewBox="0 0 720 210" className="w-full" role="img" aria-label="AfterHours position lifecycle">
@@ -16,7 +16,7 @@ export function LifecycleDiagram() {
       {/* closed-market band */}
       <rect x="180" y="20" width="200" height="170" fill="#fbbf24" fillOpacity="0.07" stroke="#fbbf24" strokeOpacity="0.25" strokeDasharray="3 3" />
       <text x="280" y="36" textAnchor="middle" fontSize="10" fill="#fbbf24" fillOpacity="0.9" fontFamily="var(--font-mono)">
-        closed market · surcharge applies
+        closed window · surcharge applies
       </text>
 
       {/* price path: flat during the weekend, gap down at first print */}

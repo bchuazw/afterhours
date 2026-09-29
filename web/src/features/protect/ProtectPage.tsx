@@ -1,16 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
 import { formatUnits } from "viem";
 import { COMPANY, deployment, isZero, type UnderlyingKey } from "@/lib/deployment";
 import { useFeed } from "@/lib/hooks/useFeed";
-import { useMarketConfig, useUnderlyingInfo } from "@/lib/hooks/useMarket";
+import { presetStrike, strikeBounds, useMarketConfig, useUnderlyingInfo } from "@/lib/hooks/useMarket";
 import { useErc20Balance } from "@/lib/hooks/useToken";
 import { useNow, useMounted } from "@/lib/hooks/useNow";
 import { useDebounced } from "@/lib/hooks/useDebounce";
-import { feedStatus, fromDatetimeLocal, nextFridayClose, nextMondayOpen, toDatetimeLocal } from "@/lib/market-hours";
-import { fmtDuration, fmtPrice, fmtTime, fmtUnits, parseDecimal, PRICE_DECIMALS, UNIT_DECIMALS } from "@/lib/format";
+import {
+  feedStatus,
+  fromDatetimeLocal,
+  isClosedAt,
+  nextOpenAt,
+  presetExpiry,
+  toDatetimeLocal,
+  type ExpiryPreset,
+} from "@/lib/market-hours";
+import { fmtDuration, fmtPrice, fmtTime, fmtUnits, fmtUtc, parseDecimal, PRICE_DECIMALS, UNIT_DECIMALS } from "@/lib/format";
 import { Card, SectionTitle, Skeleton } from "@/components/ui";
 import { UnderlyingSelector, FeedPill } from "./UnderlyingSelector";
 import { QuoteCard, type QuoteInputs } from "./QuoteCard";
@@ -18,18 +26,15 @@ import { Sparkline } from "./Sparkline";
 import { RecentProtection } from "./RecentProtection";
 
 type StrikeMode = 95 | 90 | 85 | "custom";
-type ExpiryMode = "monday" | "friday" | "7d" | "30d" | "custom";
+type ExpiryMode = ExpiryPreset | "custom";
 
 const EXPIRY_PRESETS: { id: ExpiryMode; label: string; hint: string }[] = [
-  { id: "monday", label: "Monday open", hint: "Mon 13:30 UTC" },
-  { id: "friday", label: "Friday close", hint: "Fri 20:00 UTC" },
-  { id: "7d", label: "7 days", hint: "" },
-  { id: "30d", label: "30 days", hint: "" },
+  { id: "monday", label: "Monday open", hint: "Next Monday 13:30 UTC at least the minimum tenor away" },
+  { id: "friday", label: "Friday close", hint: "Next Friday 20:00 UTC at least the minimum tenor away" },
+  { id: "7d", label: "7 days", hint: "Moved to Monday 01:00 UTC if it would land in the closed window" },
+  { id: "30d", label: "30 days", hint: "Capped at the max tenor and kept out of the closed window" },
   { id: "custom", label: "Custom", hint: "" },
 ];
-
-/** Round an 8-decimal price to cents. */
-const toCents = (p8: bigint) => (p8 / 1_000_000n) * 1_000_000n;
 
 export function ProtectPage() {
   const [key, setKey] = useState<UnderlyingKey>("TSLA");
@@ -39,64 +44,115 @@ export function ProtectPage() {
   // The burner wallet reconnects synchronously on the client; keep the first render server-equal.
   const address = mounted ? connectedAddress : undefined;
   const now = useNow(1000);
+  // True while an approve + buy is in flight: every input is frozen until it finishes.
+  const [inFlight, setInFlight] = useState(false);
 
-  const feed = useFeed(u.feed);
+  const feed = useFeed(u.feed, { underlyingId: u.id });
   const spot = feed.data?.answer;
-  const status = feedStatus(feed.data?.updatedAt, feed.data?.paused ?? false, now ? now * 1000 : Date.now());
   const { config } = useMarketConfig();
+  const status = feedStatus(feed.data?.updatedAt, {
+    paused: feed.data?.paused,
+    invalid: feed.data?.invalid,
+    maxPriceAge: config.maxPriceAge,
+    nowMs: now ? now * 1000 : Date.now(),
+  });
   const { info } = useUnderlyingInfo(u.id);
   const { data: stockBal } = useErc20Balance(isZero(u.stockToken) ? undefined : u.stockToken, address);
 
-  // ---- strike ----
+  // ---- strike (whole-dollar tick, inside the market's band around spot) ----
   const [strikeMode, setStrikeMode] = useState<StrikeMode>(90);
   const [customStrike, setCustomStrike] = useState("");
-  const strike8 = useMemo(() => {
+  const bounds = useMemo(() => (spot ? strikeBounds(spot, config) : undefined), [spot, config]);
+  const strikeParsed = useMemo(() => {
     if (strikeMode === "custom") return parseDecimal(customStrike, PRICE_DECIMALS);
-    if (!spot) return undefined;
-    return toCents((spot * BigInt(strikeMode)) / 100n);
-  }, [strikeMode, customStrike, spot]);
+    return spot ? presetStrike(spot, strikeMode, config) : undefined;
+  }, [strikeMode, customStrike, spot, config]);
+  const strikeError = useMemo(() => {
+    if (strikeMode !== "custom" || !customStrike.trim()) return undefined;
+    const tick = config.strikeTick;
+    if (strikeParsed === undefined || strikeParsed === 0n) return "Enter a valid strike price.";
+    if (strikeParsed % tick !== 0n) {
+      const lower = (strikeParsed / tick) * tick;
+      return `Strikes are whole-dollar amounts (${fmtPrice(tick)} tick). Try ${fmtPrice(lower > 0n ? lower : tick)} or ${fmtPrice(lower + tick)}.`;
+    }
+    if (bounds && spot && (strikeParsed < bounds.lo || strikeParsed > bounds.hi)) {
+      return `Strike must be between ${fmtPrice(bounds.lo)} and ${fmtPrice(bounds.hi)} (${config.minStrikeBps / 100}% to ${config.maxStrikeBps / 100}% of spot ${fmtPrice(spot)}).`;
+    }
+    return undefined;
+  }, [strikeMode, customStrike, strikeParsed, bounds, spot, config]);
+  const strike8 = strikeError ? undefined : strikeParsed;
 
-  // ---- expiry (presets are fixed at selection time so the quote key is stable) ----
+  // ---- expiry: presets are computed from now + minTenor and never land in the closed window ----
   const [expiryMode, setExpiryMode] = useState<ExpiryMode>("monday");
   const [customExpiry, setCustomExpiry] = useState("");
-  const [presetExpiry, setPresetExpiry] = useState<number | undefined>(undefined);
+  const [presetTs, setPresetTs] = useState<number | undefined>(undefined);
+  const computePreset = useCallback(
+    (m: ExpiryPreset) => presetExpiry(m, Math.floor(Date.now() / 1000), config.minTenor, config.maxTenor),
+    [config.minTenor, config.maxTenor],
+  );
+  // Recompute once the clock (or a config change) makes the current preset invalid: too close to now,
+  // beyond maxTenor or inside the closed window. Also fills the first value after mount.
   useEffect(() => {
-    const nowMs = Date.now();
-    const sec = Math.floor(nowMs / 1000);
-    if (expiryMode === "monday") setPresetExpiry(nextMondayOpen(nowMs));
-    else if (expiryMode === "friday") setPresetExpiry(nextFridayClose(nowMs));
-    else if (expiryMode === "7d") setPresetExpiry(sec + 7 * 86400);
-    else if (expiryMode === "30d") setPresetExpiry(sec + 30 * 86400 - 15 * 60);
-    else {
-      setPresetExpiry(undefined);
-      if (!customExpiry) setCustomExpiry(toDatetimeLocal(sec + 3 * 86400));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expiryMode]);
-  const expiry = expiryMode === "custom" ? fromDatetimeLocal(customExpiry) : presetExpiry;
+    if (!now || expiryMode === "custom") return;
+    const invalid =
+      presetTs === undefined ||
+      presetTs < now + config.minTenor + 60 ||
+      presetTs > now + config.maxTenor ||
+      isClosedAt(presetTs);
+    if (!invalid) return;
+    const next = computePreset(expiryMode);
+    if (next !== presetTs) setPresetTs(next);
+  }, [now, expiryMode, presetTs, config.minTenor, config.maxTenor, computePreset]);
 
-  // ---- units ----
+  const expiry = expiryMode === "custom" ? fromDatetimeLocal(customExpiry) : presetTs;
+
+  const choosePreset = (m: ExpiryMode) => {
+    if (m === "custom") {
+      if (!customExpiry) {
+        const t = Math.floor(Date.now() / 1000);
+        setCustomExpiry(toDatetimeLocal(expiry ?? computePreset("7d") ?? nextOpenAt(t + 3 * 86400)));
+      }
+    } else {
+      // Every click recomputes from the current time.
+      setPresetTs(computePreset(m));
+    }
+    setExpiryMode(m);
+  };
+
+  const customExpiryError =
+    expiryMode === "custom" && expiry !== undefined && isClosedAt(expiry)
+      ? `That time is inside the closed window (Saturday 00:00 to Monday 01:00 UTC), when the feeds are dark and no series may expire. Pick a time before Saturday 00:00 UTC or from ${fmtUtc(nextOpenAt(expiry))} on.`
+      : undefined;
+
+  // ---- units (1e18 = protection on one Stock Token) ----
   const [units, setUnits] = useState("1");
   const units18 = parseDecimal(units, UNIT_DECIMALS);
 
   // ---- validation ----
   const validation = useMemo(() => {
     const t = now || Math.floor(Date.now() / 1000);
-    if (feed.enabled && feed.data?.paused) return "The feed is paused for a corporate action; quotes are unavailable.";
-    if (strikeMode === "custom" && customStrike && !strike8) return "Enter a valid strike price.";
-    if (!units18 || units18 === 0n) return "Enter how many shares to protect.";
-    if (expiry === undefined) return "Pick an expiry.";
+    if (feed.enabled && feed.data?.paused) return "The feed or Stock Token is paused (corporate action), so quotes are unavailable.";
+    if (feed.enabled && feed.data?.invalid) return "The feed's latest answer is invalid, so the market will not quote until a valid print arrives.";
+    if (strikeError) return strikeError;
+    if (strikeMode === "custom" && !customStrike.trim()) return "Enter a strike price.";
+    if (!units18 || units18 === 0n) return "Enter how many tokens to protect.";
+    if (expiry === undefined) {
+      if (expiryMode === "custom") return "Pick an expiry.";
+      // Presets are filled on the first clock tick after mount.
+      return now ? "No preset expiry fits the tenor limits right now. Pick a custom expiry." : undefined;
+    }
+    if (customExpiryError) return customExpiryError;
+    if (isClosedAt(expiry)) return "That expiry is inside the closed window (Saturday 00:00 to Monday 01:00 UTC).";
     if (expiry < t + config.minTenor) return `Expiry must be at least ${fmtDuration(config.minTenor)} from now.`;
     if (expiry > t + config.maxTenor) return `Expiry must be within ${fmtDuration(config.maxTenor)} from now.`;
-    if (spot && strike8) {
-      const bps = (strike8 * 10_000n) / spot;
-      if (bps < BigInt(config.minStrikeBps) || bps > BigInt(config.maxStrikeBps))
-        return `Strike must be between ${config.minStrikeBps / 100}% and ${config.maxStrikeBps / 100}% of spot (${fmtPrice(spot)}).`;
-    }
     return undefined;
-  }, [now, feed.enabled, feed.data?.paused, strikeMode, customStrike, strike8, units18, expiry, config, spot]);
+  }, [now, feed.enabled, feed.data?.paused, feed.data?.invalid, strikeError, strikeMode, customStrike, units18, expiry, expiryMode, customExpiryError, config]);
 
-  const debounced = useDebounced<QuoteInputs>({ strike8, expiry, units18, validation }, 400);
+  const live = useMemo<QuoteInputs>(
+    () => ({ underlyingId: u.id, strike8, expiry, units18, validation }),
+    [u.id, strike8, expiry, units18, validation],
+  );
+  const debounced = useDebounced<QuoteInputs>(live, 400);
 
   const tenor = expiry ? Math.max(0, expiry - (now || Math.floor(Date.now() / 1000))) : 0;
 
@@ -106,13 +162,14 @@ export function ProtectPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Protect your Stock Tokens through the weekend</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted">
-            Stock Tokens trade 24/7, but their price feeds freeze from Friday close to Monday open. Buy cash-settled
-            downside protection priced onchain, paid out at the first print after expiry.
+            Stock Tokens trade 24/7, but their price feeds go dark from Friday 20:00 to Sunday 20:00 ET. Buy
+            cash-settled downside protection priced onchain: it pays max(strike − settle, 0) per token, where settle
+            is the first valid feed print at or after expiry.
           </p>
         </div>
       </div>
 
-      <UnderlyingSelector value={key} onChange={setKey} />
+      <UnderlyingSelector value={key} onChange={setKey} disabled={inFlight} />
 
       <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
         <Card className="space-y-5">
@@ -130,84 +187,138 @@ export function ProtectPage() {
             {feed.enabled && feed.data && <FeedPill status={status} long />}
           </div>
 
-          {/* Strike */}
-          <div>
-            <div className="mb-2 flex items-center justify-between">
-              <span className="label">Strike</span>
-              <span className="num text-xs text-muted">{strike8 ? fmtPrice(strike8) : "—"}</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="seg">
-                {([95, 90, 85] as const).map((p) => (
-                  <button key={p} data-active={strikeMode === p} onClick={() => setStrikeMode(p)}>
-                    {p}%
-                  </button>
-                ))}
-                <button data-active={strikeMode === "custom"} onClick={() => { setStrikeMode("custom"); if (!customStrike && spot) setCustomStrike(formatUnits(toCents((spot * 90n) / 100n), PRICE_DECIMALS)); }}>
-                  Custom
-                </button>
+          <fieldset disabled={inFlight} className="min-w-0 space-y-5 disabled:opacity-70">
+            {/* Strike */}
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="label">Strike</span>
+                <span className="num text-xs text-muted">{strike8 ? fmtPrice(strike8) : "—"}</span>
               </div>
-              {strikeMode === "custom" && (
-                <div className="relative flex-1 min-w-[160px]">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">$</span>
-                  <input className="input num pl-7" inputMode="decimal" value={customStrike} onChange={(e) => setCustomStrike(e.target.value)} placeholder="Strike price" />
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="seg">
+                  {([95, 90, 85] as const).map((p) => (
+                    <button
+                      key={p}
+                      data-active={strikeMode === p}
+                      onClick={() => setStrikeMode(p)}
+                      title={spot ? fmtPrice(presetStrike(spot, p, config)) : undefined}
+                    >
+                      {p}%
+                    </button>
+                  ))}
+                  <button
+                    data-active={strikeMode === "custom"}
+                    onClick={() => {
+                      setStrikeMode("custom");
+                      if (!customStrike && spot) {
+                        const s = presetStrike(spot, 90, config);
+                        if (s) setCustomStrike(formatUnits(s, PRICE_DECIMALS));
+                      }
+                    }}
+                  >
+                    Custom
+                  </button>
                 </div>
-              )}
-            </div>
-            <p className="mt-1.5 text-[11px] text-dim">Percent of spot. You are paid (strike − settle price) per share if the print at expiry is below the strike.</p>
-          </div>
-
-          {/* Expiry */}
-          <div>
-            <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-              <span className="label">Expiry</span>
-              <span className="num text-right text-xs text-muted">{expiry ? `${fmtTime(expiry)} · in ${fmtDuration(tenor)}` : "—"}</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="seg flex-wrap">
-                {EXPIRY_PRESETS.map((p) => (
-                  <button key={p.id} data-active={expiryMode === p.id} onClick={() => setExpiryMode(p.id)} title={p.hint}>
-                    {p.label}
-                  </button>
-                ))}
+                {strikeMode === "custom" && (
+                  <div className="relative flex-1 min-w-[160px]">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">$</span>
+                    <input
+                      className="input num pl-7"
+                      inputMode="numeric"
+                      value={customStrike}
+                      onChange={(e) => setCustomStrike(e.target.value)}
+                      placeholder="Strike price"
+                      aria-invalid={!!strikeError}
+                    />
+                  </div>
+                )}
               </div>
-              {expiryMode === "custom" && (
-                <input type="datetime-local" className="input num flex-1 min-w-[200px]" value={customExpiry} onChange={(e) => setCustomExpiry(e.target.value)} />
+              {strikeError ? (
+                <p className="mt-1.5 text-[11px] text-neg">{strikeError}</p>
+              ) : (
+                <p className="mt-1.5 text-[11px] text-dim">
+                  Percent of spot, rounded to a whole dollar ({fmtPrice(config.strikeTick)} tick)
+                  {bounds ? `; valid ${fmtPrice(bounds.lo)} to ${fmtPrice(bounds.hi)}` : ""}. Pays (strike − settle price)
+                  per token if the first print after expiry is below the strike.
+                </p>
               )}
             </div>
-          </div>
 
-          {/* Units */}
-          <div>
-            <div className="mb-2 flex items-center justify-between">
-              <span className="label">Shares to protect</span>
-              {stockBal !== undefined && (
-                <button className="text-xs text-accent hover:underline" onClick={() => setUnits(formatUnits(stockBal, UNIT_DECIMALS))}>
-                  Protect all · {fmtUnits(stockBal, 4)} {u.symbol}
-                </button>
+            {/* Expiry */}
+            <div>
+              <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <span className="label">Expiry</span>
+                <span className="num text-right text-xs text-muted">{expiry ? `${fmtTime(expiry)} · in ${fmtDuration(tenor)}` : "—"}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="seg flex-wrap">
+                  {EXPIRY_PRESETS.map((p) => (
+                    <button key={p.id} data-active={expiryMode === p.id} onClick={() => choosePreset(p.id)} title={p.hint || undefined}>
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+                {expiryMode === "custom" && (
+                  <input
+                    type="datetime-local"
+                    className="input num flex-1 min-w-[200px]"
+                    value={customExpiry}
+                    onChange={(e) => setCustomExpiry(e.target.value)}
+                    aria-invalid={!!customExpiryError}
+                  />
+                )}
+              </div>
+              {customExpiryError ? (
+                <p className="mt-1.5 text-[11px] text-neg">{customExpiryError}</p>
+              ) : (
+                <p className="mt-1.5 text-[11px] text-dim">
+                  No series may expire while the feeds are dark (Saturday 00:00 to Monday 01:00 UTC), so every expiry
+                  is followed by a live print.
+                </p>
               )}
             </div>
-            <div className="flex gap-2">
-              <input className="input num" inputMode="decimal" value={units} onChange={(e) => setUnits(e.target.value)} placeholder="1.0" />
-              <div className="seg">
-                {["0.1", "1", "10"].map((v) => (
-                  <button key={v} data-active={units === v} onClick={() => setUnits(v)}>
-                    {v}
+
+            {/* Units */}
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <span className="label">Tokens to protect</span>
+                {stockBal !== undefined && (
+                  <button className="text-xs text-accent hover:underline" onClick={() => setUnits(formatUnits(stockBal, UNIT_DECIMALS))}>
+                    Protect all · {fmtUnits(stockBal, 4)} {u.symbol}
                   </button>
-                ))}
+                )}
               </div>
+              <div className="flex gap-2">
+                <input className="input num" inputMode="decimal" value={units} onChange={(e) => setUnits(e.target.value)} placeholder="1.0" />
+                <div className="seg">
+                  {["0.1", "1", "10"].map((v) => (
+                    <button key={v} data-active={units === v} onClick={() => setUnits(v)}>
+                      {v}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <p className="mt-1.5 text-[11px] text-dim">
+                One unit protects one {u.symbol} Stock Token.{" "}
+                {isZero(u.stockToken)
+                  ? "Protection is cash-settled; you do not need to hold the Stock Token to buy it."
+                  : address
+                    ? `Your ${u.symbol} Stock Token balance is shown above. Protection is cash-settled, so any amount works.`
+                    : "Connect a wallet to see your Stock Token balance."}
+              </p>
             </div>
-            <p className="mt-1.5 text-[11px] text-dim">
-              {isZero(u.stockToken)
-                ? "Protection is cash-settled; you do not need to hold the Stock Token to buy it."
-                : address
-                  ? `Your ${u.symbol} Stock Token balance is shown above. Protection is cash-settled, so any amount works.`
-                  : "Connect a wallet to see your Stock Token balance."}
-            </p>
-          </div>
+          </fieldset>
         </Card>
 
-        <QuoteCard underlying={u} inputs={debounced} lookback={info?.params.lookback} />
+        <QuoteCard
+          underlying={u}
+          inputs={debounced}
+          live={live}
+          underlyingEnabled={info?.enabled}
+          lookback={info?.params.lookback}
+          inFlight={inFlight}
+          onInFlightChange={setInFlight}
+        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
@@ -224,8 +335,8 @@ export function ProtectPage() {
         <Card>
           <SectionTitle>Why the weekend matters</SectionTitle>
           <ul className="space-y-2 text-sm text-muted">
-            <li className="flex gap-2"><span className="text-warn">▮</span><span>Shaded bands are closed-market windows: the feed holds Friday&apos;s close for ~52 hours while the token keeps trading.</span></li>
-            <li className="flex gap-2"><span className="text-accent">╌</span><span>The dashed line is your strike. If Monday&apos;s first print lands below it, you are paid the difference per share.</span></li>
+            <li className="flex gap-2"><span className="text-warn">▮</span><span>Shaded bands are closed-market windows: the feed holds Friday&apos;s close for about 48 hours while the token keeps trading. Sales pause from Saturday 00:00 to Monday 01:00 UTC.</span></li>
+            <li className="flex gap-2"><span className="text-accent">╌</span><span>The dashed line is your strike. If the first print after expiry lands below it, you are paid the difference per token.</span></li>
             <li className="flex gap-2"><span className="text-pos">●</span><span>Premiums are quoted from realized vol over the lookback window, with closed hours weighted by the closed-market multiplier.</span></li>
           </ul>
         </Card>

@@ -43,6 +43,16 @@ export const MAINNET_FEEDS: Record<string, Address> = {
   AMD: "0x943A29E7ae51A4798823ca9eEd2ed533B2A22C72",
 };
 
+/// Robinhood Stock Tokens on mainnet. The corporate-action pause (`oraclePaused()`) lives on the
+/// token, not the feed; the relayer copies it onto each FeedMirror.
+export const MAINNET_STOCK_TOKENS: Record<string, Address> = {
+  TSLA: "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+  AMZN: "0x12f190a9F9d7D37a250758b26824B97CE941bF54",
+  NVDA: "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+  PLTR: "0x894E1EC2D74FFE5AEF8Dc8A9e84686acCB964F2A",
+  AMD: "0x86923f96303D656E4aa86D9d42D1e57ad2023fdC",
+};
+
 export type Deployment = {
   chainId: number;
   deployer: Address;

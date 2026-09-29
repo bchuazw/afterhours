@@ -1,6 +1,6 @@
 [package]
 name = "afterhours-pricer"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "AfterHours onchain put pricer: Black-Scholes with realized vol from Chainlink round history and a closed-market surcharge. Arbitrum Stylus (Rust)."
 license = "MIT"
@@ -26,3 +26,6 @@ strip = true
 lto = true
 panic = "abort"
 opt-level = "z"
+# Pricing math must revert rather than wrap into a wrong (e.g. near-zero) premium. Also makes the
+# native `cargo test --release` property tests catch any overflow as a panic.
+overflow-checks = true

@@ -28,10 +28,101 @@ export const marketAbi = [
   },
   {
     "type": "function",
+    "name": "MAX_ACTIVE_SERIES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_SETTLE_WALK",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MIN_PREMIUM_BPS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "PRICER_TIMELOCK",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "STRIKE_TICK",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "acceptOwnership",
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "acceptPricer",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "activeSeries",
+    "inputs": [
+      {
+        "name": "underlyingId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -85,14 +176,9 @@ export const marketAbi = [
         ]
       },
       {
-        "name": "vaultName",
-        "type": "string",
-        "internalType": "string"
-      },
-      {
-        "name": "vaultSymbol",
-        "type": "string",
-        "internalType": "string"
+        "name": "vault",
+        "type": "address",
+        "internalType": "contract ProtectionVault"
       }
     ],
     "outputs": [
@@ -260,6 +346,16 @@ export const marketAbi = [
             "internalType": "uint64"
           },
           {
+            "name": "grace",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "settled",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
             "name": "strike",
             "type": "uint256",
             "internalType": "uint256"
@@ -270,14 +366,24 @@ export const marketAbi = [
             "internalType": "uint256"
           },
           {
+            "name": "locked",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "premium",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "settlePrice",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "settled",
-            "type": "bool",
-            "internalType": "bool"
+            "name": "owed",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -375,6 +481,44 @@ export const marketAbi = [
         "name": "operator",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isClosedAt",
+    "inputs": [
+      {
+        "name": "ts",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "isFeedPaused",
+    "inputs": [
+      {
+        "name": "underlyingId",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [
@@ -523,6 +667,32 @@ export const marketAbi = [
   },
   {
     "type": "function",
+    "name": "pendingPricer",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IPricer"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingPricerEta",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "pricer",
     "inputs": [],
     "outputs": [
@@ -533,6 +703,19 @@ export const marketAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "proposePricer",
+    "inputs": [
+      {
+        "name": "newPricer",
+        "type": "address",
+        "internalType": "contract IPricer"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -771,19 +954,6 @@ export const marketAbi = [
   },
   {
     "type": "function",
-    "name": "setPricer",
-    "inputs": [
-      {
-        "name": "pricer_",
-        "type": "address",
-        "internalType": "contract IPricer"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setUnderlying",
     "inputs": [
       {
@@ -840,6 +1010,24 @@ export const marketAbi = [
         "name": "id",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settleAt",
+    "inputs": [
+      {
+        "name": "id",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "roundId",
+        "type": "uint80",
+        "internalType": "uint80"
       }
     ],
     "outputs": [],
@@ -938,6 +1126,30 @@ export const marketAbi = [
         "name": "",
         "type": "string",
         "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "vaultState",
+    "inputs": [
+      {
+        "name": "underlyingId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "open",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "liability",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -1057,6 +1269,25 @@ export const marketAbi = [
   },
   {
     "type": "event",
+    "name": "PricerProposed",
+    "inputs": [
+      {
+        "name": "pricer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "eta",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "PricerUpdated",
     "inputs": [
       {
@@ -1137,6 +1368,43 @@ export const marketAbi = [
   },
   {
     "type": "event",
+    "name": "SeriesCreated",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "underlyingId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "strike",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "expiry",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "grace",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "SeriesSettled",
     "inputs": [
       {
@@ -1152,10 +1420,28 @@ export const marketAbi = [
         "internalType": "uint256"
       },
       {
+        "name": "roundId",
+        "type": "uint80",
+        "indexed": false,
+        "internalType": "uint80"
+      },
+      {
         "name": "fallbackUsed",
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      },
+      {
+        "name": "owed",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "released",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1378,12 +1664,37 @@ export const marketAbi = [
   },
   {
     "type": "error",
+    "name": "BadConfig",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "BadExpiry",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "BadFeed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BadParams",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BadRoundHint",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "BadStrike",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BadVault",
     "inputs": []
   },
   {
@@ -1510,6 +1821,16 @@ export const marketAbi = [
   },
   {
     "type": "error",
+    "name": "MarketClosed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoPendingPricer",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotExpired",
     "inputs": []
   },
@@ -1558,6 +1879,33 @@ export const marketAbi = [
   },
   {
     "type": "error",
+    "name": "PricerSpotMismatch",
+    "inputs": [
+      {
+        "name": "pricerSpot",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "feedSpot",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PricerTimelocked",
+    "inputs": [
+      {
+        "name": "eta",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ReentrancyGuardReentrantCall",
     "inputs": []
   },
@@ -1574,6 +1922,11 @@ export const marketAbi = [
   },
   {
     "type": "error",
+    "name": "SettleWalkTooLong",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "StalePrice",
     "inputs": [
       {
@@ -1585,7 +1938,17 @@ export const marketAbi = [
   },
   {
     "type": "error",
+    "name": "TooManyActiveSeries",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "UnderlyingDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownSeries",
     "inputs": []
   },
   {

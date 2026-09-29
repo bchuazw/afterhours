@@ -2,31 +2,47 @@
 
 import { COMPANY, underlyingList, type UnderlyingDeployment, type UnderlyingKey } from "@/lib/deployment";
 import { useFeed } from "@/lib/hooks/useFeed";
+import { useMarketConfig } from "@/lib/hooks/useMarket";
 import { useNow } from "@/lib/hooks/useNow";
 import { feedStatus } from "@/lib/market-hours";
 import { fmtAgo, fmtPrice, fmtUtc } from "@/lib/format";
 import { Pill, Skeleton } from "@/components/ui";
 
-export function UnderlyingSelector({ value, onChange }: { value: UnderlyingKey; onChange: (k: UnderlyingKey) => void }) {
+export function UnderlyingSelector({
+  value,
+  onChange,
+  disabled = false,
+}: {
+  value: UnderlyingKey;
+  onChange: (k: UnderlyingKey) => void;
+  disabled?: boolean;
+}) {
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
       {underlyingList.map((u) => (
-        <UnderlyingTile key={u.key} u={u} active={u.key === value} onClick={() => onChange(u.key)} />
+        <UnderlyingTile key={u.key} u={u} active={u.key === value} disabled={disabled} onClick={() => onChange(u.key)} />
       ))}
     </div>
   );
 }
 
-function UnderlyingTile({ u, active, onClick }: { u: UnderlyingDeployment; active: boolean; onClick: () => void }) {
-  const { data, isLoading, error, enabled } = useFeed(u.feed);
+function UnderlyingTile({ u, active, disabled, onClick }: { u: UnderlyingDeployment; active: boolean; disabled: boolean; onClick: () => void }) {
+  const { data, isLoading, error, enabled } = useFeed(u.feed, { underlyingId: u.id });
+  const { config } = useMarketConfig();
   const now = useNow(10_000);
-  const status = feedStatus(data?.updatedAt, data?.paused ?? false, now ? now * 1000 : Date.now());
+  const status = feedStatus(data?.updatedAt, {
+    paused: data?.paused,
+    invalid: data?.invalid,
+    maxPriceAge: config.maxPriceAge,
+    nowMs: now ? now * 1000 : Date.now(),
+  });
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`card group text-left transition ${active ? "border-accent-2/70 ring-1 ring-accent-2/40" : "hover:border-line-2"}`}
+      disabled={disabled}
+      className={`card group text-left transition disabled:cursor-not-allowed ${active ? "border-accent-2/70 ring-1 ring-accent-2/40" : "hover:border-line-2 disabled:opacity-60"}`}
     >
       <div className="flex items-start justify-between gap-2 p-4">
         <div>
@@ -35,7 +51,17 @@ function UnderlyingTile({ u, active, onClick }: { u: UnderlyingDeployment; activ
             <span className="text-xs text-muted">{COMPANY[u.key]}</span>
           </div>
           <div className="num mt-1.5 text-2xl leading-none">
-            {!enabled ? <span className="text-dim">—</span> : isLoading ? <Skeleton className="h-6 w-24" /> : error ? <span className="text-neg text-sm">feed error</span> : fmtPrice(data?.answer)}
+            {!enabled ? (
+              <span className="text-dim">—</span>
+            ) : isLoading ? (
+              <Skeleton className="h-6 w-24" />
+            ) : error ? (
+              <span className="text-neg text-sm">feed error</span>
+            ) : data?.invalid ? (
+              <span className="text-neg text-sm">invalid answer</span>
+            ) : (
+              fmtPrice(data?.answer)
+            )}
           </div>
           <div className="mt-1.5 text-[11px] text-dim">
             {data ? (
@@ -56,14 +82,24 @@ function UnderlyingTile({ u, active, onClick }: { u: UnderlyingDeployment; activ
 }
 
 export function FeedPill({ status, long = false }: { status: ReturnType<typeof feedStatus>; long?: boolean }) {
-  if (status.kind === "live") return <Pill tone="live">{long ? "Market open · feed live" : "Open"}</Pill>;
-  if (status.kind === "closed")
-    return (
-      <Pill tone="closed">
-        {long ? `Market closed · feed frozen since ${fmtUtc(status.since)}` : "Closed"}
-      </Pill>
-    );
-  if (status.kind === "paused") return <Pill tone="neg">{long ? status.label : "Paused"}</Pill>;
-  if (status.kind === "stale") return <Pill tone="closed">{long ? `Feed quiet · last print ${fmtUtc(status.since)}` : "Quiet"}</Pill>;
-  return <Pill>{status.label}</Pill>;
+  switch (status.kind) {
+    case "live":
+      return <Pill tone="live">{long ? "Market open · feed live" : "Open"}</Pill>;
+    case "closed":
+      return (
+        <Pill tone="closed">
+          {long ? `Market closed · feed dark · sales reopen ${fmtUtc(status.reopens)}` : "Closed"}
+        </Pill>
+      );
+    case "quiet":
+      return <Pill tone="closed">{long ? `Feed quiet · last print ${fmtUtc(status.since)}` : "Quiet"}</Pill>;
+    case "stale":
+      return <Pill tone="neg">{long ? `Feed stale · last print ${fmtUtc(status.since)}` : "Stale"}</Pill>;
+    case "paused":
+      return <Pill tone="neg">{long ? status.label : "Paused"}</Pill>;
+    case "invalid":
+      return <Pill tone="neg">{long ? status.label : "Invalid"}</Pill>;
+    default:
+      return <Pill>{status.label}</Pill>;
+  }
 }

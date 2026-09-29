@@ -8,7 +8,8 @@
     "mirror": "tsx src/mirror.ts",
     "mirror:once": "tsx src/mirror.ts --once",
     "settle": "tsx src/settle.ts",
-    "status": "tsx src/status.ts"
+    "settle:once": "tsx src/settle.ts --once",
+    "typecheck": "tsc -p ."
   },
   "dependencies": {
     "dotenv": "^16.4.5",

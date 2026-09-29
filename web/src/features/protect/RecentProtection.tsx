@@ -19,7 +19,7 @@ export function RecentProtection({ underlyingId }: { underlyingId?: number }) {
             <th>Underlying</th>
             <th className="r">Strike</th>
             <th>Expiry</th>
-            <th className="r">Shares</th>
+            <th className="r">Tokens</th>
             <th className="r">Premium</th>
             <th className="r">Spot</th>
             <th className="r">Vol</th>

@@ -59,6 +59,10 @@ body {
 .input:focus {
   border-color: var(--color-accent-2);
 }
+.input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 .input::placeholder {
   color: var(--color-dim);
 }
@@ -127,8 +131,11 @@ body {
   color: var(--color-muted);
   transition: all 120ms ease;
 }
-.seg > button:hover {
+.seg > button:hover:not(:disabled) {
   color: var(--color-fg);
+}
+.seg > button:disabled {
+  cursor: not-allowed;
 }
 .seg > button[data-active="true"] {
   background: var(--color-panel-2);
