@@ -36,8 +36,9 @@ if [ -z "${PRICER:-}" ]; then
   [ -n "$PRICER" ] || { echo "pricer deployment failed"; echo "$out" | tail -20; exit 1; }
 fi
 echo "pricer $PRICER"
-v=$(cast call --rpc-url "$RPC" "$PRICER" "version()(uint32)")
-[ "$v" = "1" ] || { echo "pricer at $PRICER did not answer version()"; exit 1; }
+v=$(cast call --rpc-url "$RPC" "$PRICER" "version()(uint32)" 2>/dev/null | awk '{print $1}')
+[ -n "$v" ] && [ "$v" -ge 1 ] 2>/dev/null || { echo "pricer at $PRICER did not answer version()"; exit 1; }
+echo "pricer version $v"
 
 echo "== Solidity =="
 cd "$ROOT/contracts"
