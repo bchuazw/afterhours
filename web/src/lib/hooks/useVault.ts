@@ -10,6 +10,7 @@ import { fmtDuration, fmtUtc } from "@/lib/format";
 import { useFeed } from "./useFeed";
 import { useMarketConfig } from "./useMarket";
 import { useNow } from "./useNow";
+import { useActiveSeries, type SeriesInfo } from "./useSeries";
 
 /** Vault utilization cap (ProtectionVault.MAX_UTILIZATION_BPS). */
 export const MAX_UTILIZATION_BPS = 9_000n;
@@ -37,7 +38,9 @@ export type VaultStats = {
 
 /**
  * Everything the app shows about one underlying's writer vault, plus a human explanation of why the
- * vault is closed when AfterHoursMarket.vaultState says so.
+ * vault is closed when AfterHoursMarket.vaultState says so. `expired` lists the active series whose
+ * expiry has passed: each one keeps the vault closed until anyone settles it (VaultCard offers a
+ * button; positions are not needed to call settle).
  */
 export function useVault(u: UnderlyingDeployment, owner?: Address) {
   const enabled = isDeployed && !isZero(u.vault);
@@ -61,11 +64,12 @@ export function useVault(u: UnderlyingDeployment, owner?: Address) {
       { ...vault, functionName: "maxDeposit", args: [who] },
       { ...vault, functionName: "maxWithdraw", args: [who] },
       { ...vault, functionName: "maxRedeem", args: [who] },
-      { ...market, functionName: "activeSeries", args: [u.id] },
     ],
     allowFailure: true,
     query: { enabled, refetchInterval: 15_000 },
   });
+
+  const { ids: activeIds, series } = useActiveSeries(u.id, { enabled });
 
   const stats = useMemo<VaultStats | undefined>(() => {
     const r = q.data;
@@ -88,30 +92,28 @@ export function useVault(u: UnderlyingDeployment, owner?: Address) {
       maxDeposit: owner ? g<bigint>(11) : undefined,
       maxWithdraw: owner ? g<bigint>(12) : undefined,
       maxRedeem: owner ? g<bigint>(13) : undefined,
-      activeIds: g<readonly bigint[]>(14) ?? [],
+      activeIds,
     };
-  }, [q.data, owner]);
-
-  const activeIds = stats?.activeIds ?? [];
-  const seriesQ = useReadContracts({
-    contracts: activeIds.map((id) => ({ ...market, functionName: "getSeries", args: [id] }) as const),
-    allowFailure: true,
-    query: { enabled: enabled && activeIds.length > 0, refetchInterval: 15_000 },
-  });
+  }, [q.data, owner, activeIds]);
 
   const feed = useFeed(u.feed, { underlyingId: u.id });
   const { config } = useMarketConfig();
   const now = useNow(15_000);
+
+  const expired = useMemo<SeriesInfo[]>(() => {
+    const t = now || Math.floor(Date.now() / 1000);
+    return (series ?? []).filter((s) => !s.settled && s.expiry <= t);
+  }, [series, now]);
 
   const closedReasons = useMemo<string[]>(() => {
     if (!stats || stats.open !== false) return [];
     const t = now || Math.floor(Date.now() / 1000);
     const out: string[] = [];
     const exposure = activeIds.length > 0;
-    const expired = (seriesQ.data ?? []).filter((s) => s.status === "success" && Number(s.result.expiry) <= t).length;
-    if (expired > 0) {
+    const n = expired.length;
+    if (n > 0) {
       out.push(
-        `${expired} expired series ${expired === 1 ? "awaits" : "await"} settlement. Anyone can settle from the Positions tab (the keeper also does), and the vault reopens once it settles.`,
+        `${n} expired series ${n === 1 ? "awaits" : "await"} settlement. Anyone can settle it below (the keeper also does), and the vault reopens once ${n === 1 ? "it settles" : "they settle"}.`,
       );
     }
     if (exposure && isClosedAt(t)) {
@@ -126,12 +128,16 @@ export function useVault(u: UnderlyingDeployment, owner?: Address) {
     }
     if (out.length === 0) out.push("The market reports this vault closed to entries and exits right now.");
     return out;
-  }, [stats, activeIds.length, seriesQ.data, feed.data, config.maxPriceAge, now]);
+  }, [stats, activeIds.length, expired.length, feed.data, config.maxPriceAge, now]);
 
   const firstError = q.data?.find((x) => x.status === "failure")?.error;
 
   return {
     stats,
+    /** Active series of this underlying (undefined until loaded). */
+    series,
+    /** Active series past expiry, awaiting settlement. */
+    expired,
     closedReasons,
     enabled,
     isLoading: enabled && q.isLoading,

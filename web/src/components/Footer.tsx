@@ -1,5 +1,5 @@
 import { deployment, underlyingList, isZero } from "@/lib/deployment";
-import { explorerAddress } from "@/lib/chain";
+import { EXPLORER_URL, explorerAddress } from "@/lib/chain";
 import { shortAddr } from "@/lib/format";
 
 function Addr({ label, address }: { label: string; address: `0x${string}` }) {
@@ -31,7 +31,9 @@ export function Footer() {
           <p className="mt-3 text-xs text-dim">Built on Robinhood Chain · Arbitrum Stylus</p>
           <div className="mt-2 flex gap-3 text-xs">
             <a className="link" href="https://github.com/bchuazw/afterhours" target="_blank" rel="noreferrer">GitHub</a>
-            <a className="link" href="https://explorer.testnet.chain.robinhood.com" target="_blank" rel="noreferrer">Explorer</a>
+            {EXPLORER_URL && (
+              <a className="link" href={EXPLORER_URL} target="_blank" rel="noreferrer">Explorer</a>
+            )}
             <a className="link" href="https://docs.robinhood.com/chain" target="_blank" rel="noreferrer">Robinhood Chain docs</a>
           </div>
         </div>

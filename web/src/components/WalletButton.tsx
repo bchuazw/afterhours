@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useAccount, useBalance, useConnect, useDisconnect } from "wagmi";
 import { formatEther } from "viem";
 import { BURNER_ID, burnerAddress, exportBurnerKey, resetBurner } from "@/lib/burner";
-import { targetChain } from "@/lib/chain";
+import { explorerAddress, targetChain } from "@/lib/chain";
 import { shortAddr } from "@/lib/format";
 import { useMounted } from "@/lib/hooks/useNow";
 import { AddressLink, CopyButton } from "./ui";
@@ -133,6 +133,8 @@ function WalletModal({ onClose }: { onClose: () => void }) {
 function ConnectedPanel({ address, isBurner, onDisconnect }: { address: `0x${string}`; isBurner: boolean; onDisconnect: () => void }) {
   const { data: eth } = useBalance({ address, chainId: targetChain.id, query: { refetchInterval: 15_000 } });
   const { data: tusd } = useTusdBalance(address);
+  // Follows the deployed chain (deployments.json); undefined on networks without an explorer (local node).
+  const explorer = explorerAddress(address);
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
@@ -142,9 +144,11 @@ function ConnectedPanel({ address, isBurner, onDisconnect }: { address: `0x${str
         </div>
         <div className="flex gap-2">
           <CopyButton text={address} label="Copy address" />
-          <a href={`https://explorer.testnet.chain.robinhood.com/address/${address}`} target="_blank" rel="noreferrer" className="btn btn-sm">
-            Explorer
-          </a>
+          {explorer && (
+            <a href={explorer} target="_blank" rel="noreferrer" className="btn btn-sm">
+              Explorer
+            </a>
+          )}
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3 rounded-lg border border-line bg-bg p-3">
@@ -162,7 +166,11 @@ function ConnectedPanel({ address, isBurner, onDisconnect }: { address: `0x${str
         <button className="btn btn-sm" onClick={onDisconnect}>Disconnect</button>
       </div>
       <p className="text-xs leading-relaxed text-muted">
-        Need gas? Send a little testnet ETH to this address (copy it above). <AddressLink address={address} chars={6} />
+        Need gas? Send a little testnet ETH to this address (copy it above), e.g. from the{" "}
+        <a className="link" href="https://faucet.testnet.chain.robinhood.com" target="_blank" rel="noreferrer">
+          Robinhood Chain testnet faucet
+        </a>
+        . <AddressLink address={address} chars={6} />
       </p>
     </div>
   );

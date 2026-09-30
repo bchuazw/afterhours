@@ -145,6 +145,7 @@ export function QuoteCard({
       cap,
       // Most tokens the vault could back at this strike: headroom * 1e20 / strike (8-dec price, 6-dec asset).
       maxUnits: cap && inputs.strike8 > 0n ? (cap.headroom * 10n ** 20n) / inputs.strike8 : undefined,
+      isNewSeries,
       tooManySeries: isNewSeries && vault !== undefined && vault.activeIds.length >= config.maxActiveSeries,
     };
   }, [ready, q.data, inputs, now, allowance, tusd, vault, config.maxActiveSeries]);
@@ -160,7 +161,7 @@ export function QuoteCard({
       } capital on Earn.`;
     }
     if (d.tooManySeries) {
-      return `${underlying.symbol} already has ${config.maxActiveSeries} open series and this strike and expiry would open a new one. Pick a strike and expiry that already trade, or wait for a series to settle.`;
+      return `${underlying.symbol} already has ${config.maxActiveSeries} open series and this strike and expiry would open a new one. Join one of the open series listed under Expiry, or wait for a series to settle.`;
     }
     if (wrongChain) return WRONG_CHAIN_HINT;
     return undefined;
@@ -286,6 +287,23 @@ export function QuoteCard({
               v={d ? <>{fmtPrice(BigInt(Math.round(d.breakeven * 1e8)))}</> : <Skeleton />}
             />
             <Row k="Expiry" v={inputs.expiry ? fmtTime(inputs.expiry) : "—"} muted />
+            <Row
+              k="Series"
+              v={
+                d && vault ? (
+                  d.isNewSeries ? (
+                    <span title={`${underlying.symbol} has ${vault.activeIds.length} of ${config.maxActiveSeries} open series`}>
+                      new ({vault.activeIds.length}/{config.maxActiveSeries} open)
+                    </span>
+                  ) : (
+                    "joins an open series"
+                  )
+                ) : (
+                  <Skeleton />
+                )
+              }
+              muted
+            />
           </div>
 
           <p className="mt-3 text-[11px] leading-relaxed text-dim">

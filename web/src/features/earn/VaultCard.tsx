@@ -5,12 +5,14 @@ import { useAccount, useReadContracts } from "wagmi";
 import { formatUnits } from "viem";
 import { erc20Abi, vaultAbi } from "@/abi";
 import { COMPANY, deployment, isDeployed, isZero, type UnderlyingDeployment } from "@/lib/deployment";
-import { fmtBps, fmtUsd, parseDecimal, USD_DECIMALS, usdToNumber } from "@/lib/format";
+import { fmtBps, fmtDuration, fmtPrice, fmtTime, fmtUnits, fmtUsd, parseDecimal, USD_DECIMALS, usdToNumber } from "@/lib/format";
 import { useAllowance, useTusdBalance } from "@/lib/hooks/useToken";
 import { useVaultFlows } from "@/lib/hooks/useLogs";
 import { useTx, WRONG_CHAIN_HINT } from "@/lib/hooks/useTx";
+import { useSettle } from "@/lib/hooks/useSettle";
+import { type SeriesInfo } from "@/lib/hooks/useSeries";
 import { useVault, type VaultStats } from "@/lib/hooks/useVault";
-import { useMounted } from "@/lib/hooks/useNow";
+import { useMounted, useNow } from "@/lib/hooks/useNow";
 import { AddressLink, ErrorNote, InfoNote, Pill, Stat } from "@/components/ui";
 import { FaucetButton } from "@/components/FaucetButton";
 
@@ -19,7 +21,7 @@ export function VaultCard({ u }: { u: UnderlyingDeployment }) {
   const { address: connected, isConnected } = useAccount();
   const address = mounted ? connected : undefined;
   const vault = { address: u.vault, abi: vaultAbi } as const;
-  const { stats: base, closedReasons, enabled, isLoading: loading, error } = useVault(u, address);
+  const { stats: base, expired, closedReasons, enabled, isLoading: loading, error } = useVault(u, address);
 
   const oneShare = 10n ** BigInt(base?.decimals ?? 12);
   const conv = useReadContracts({
@@ -69,6 +71,8 @@ export function VaultCard({ u }: { u: UnderlyingDeployment }) {
           </ul>
         </div>
       )}
+
+      {expired.length > 0 && <ExpiredSeries u={u} series={expired} />}
 
       <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4">
         <Stat
@@ -133,6 +137,52 @@ export function VaultCard({ u }: { u: UnderlyingDeployment }) {
       ) : (
         <Forms u={u} stats={base} closedReasons={closedReasons} />
       )}
+    </div>
+  );
+}
+
+/**
+ * Expired series still on the active list. Anyone can settle them (no position needed), which is
+ * what unfreezes the vault; the keeper does the same on its own schedule.
+ */
+function ExpiredSeries({ u, series }: { u: UnderlyingDeployment; series: SeriesInfo[] }) {
+  const mounted = useMounted();
+  const { isConnected } = useAccount();
+  const now = useNow(1000);
+  const { settle, notes, busy, wrongChain } = useSettle();
+  const t = now || Math.floor(Date.now() / 1000);
+  const canSend = mounted && isConnected && !wrongChain;
+  return (
+    <div className="mt-3 rounded-lg border border-line bg-bg p-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="label">Expired series awaiting settlement</span>
+        <span className="text-[11px] text-dim">
+          {mounted && !isConnected ? "Connect any wallet to settle" : "Settling takes one transaction and needs no position"}
+        </span>
+      </div>
+      <ul className="mt-2 divide-y divide-line">
+        {series.map((s) => {
+          const key = s.id.toString();
+          return (
+            <li key={key} className="py-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <div className="min-w-0">
+                  <span className="num">{fmtPrice(s.strike)} put</span>
+                  <span className="text-muted"> · expired {fmtTime(s.expiry)}</span>
+                  <span className="text-dim"> · {fmtDuration(t - s.expiry)} ago · {fmtUnits(s.openUnits, 2)} open</span>
+                </div>
+                <button className="btn btn-primary btn-sm" disabled={!canSend || busy} onClick={() => settle(s.id, u.symbol)}>
+                  Settle
+                </button>
+              </div>
+              {notes[key] && (
+                <div className="mt-2 rounded-lg border border-warn/30 bg-warn/5 px-3 py-2 text-xs leading-relaxed text-warn">{notes[key]}</div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {mounted && wrongChain && <div className="mt-2 text-xs text-warn">{WRONG_CHAIN_HINT}</div>}
     </div>
   );
 }

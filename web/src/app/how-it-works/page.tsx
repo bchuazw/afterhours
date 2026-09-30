@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { deployment, underlyingList, isZero } from "@/lib/deployment";
-import { explorerAddress, CHAIN_NAME } from "@/lib/chain";
+import { EXPLORER_URL, explorerAddress, CHAIN_NAME } from "@/lib/chain";
 import { LifecycleDiagram } from "@/features/how/LifecycleDiagram";
 
 export const metadata: Metadata = { title: "How it works · AfterHours" };
@@ -44,6 +44,14 @@ export default function Page() {
           That is the union of the dark period in US daylight time (Sat 00:00 to Mon 00:00 UTC) and in standard time (Sat
           01:00 to Mon 01:00 UTC), so it stays conservative across DST changes. No protection is sold inside the window
           and no series may expire inside it, so every expiry is followed by a live print.
+        </p>
+        <p className="mt-2 text-sm leading-relaxed text-muted">
+          In practice the feeds stop printing at the Friday regular-session close, around 20:00 UTC, and the next print
+          is the Monday reopen. A series expiring on Friday evening would be priced with no closed-market time yet
+          settle on that Monday print, so this app treats <span className="text-fg">Friday 20:00 UTC to Monday 01:00 UTC</span>{" "}
+          as dark and never offers an expiry inside it. Its presets land on a listed grid (weekday 19:00 UTC, or Monday
+          13:30 UTC) so buyers join the same series instead of opening a new one on every purchase; you can also join
+          any open series directly from the Protect tab.
         </p>
       </section>
 
@@ -148,7 +156,10 @@ export default function Page() {
       <section className="card p-5">
         <h2 className="text-base font-semibold">Safety rails</h2>
         <ul className="mt-2 space-y-1.5 text-sm text-muted">
-          <li>No sales and no expiries in the closed window (Sat 00:00 to Mon 01:00 UTC).</li>
+          <li>
+            No sales and no expiries in the closed window (Sat 00:00 to Mon 01:00 UTC); the app also refuses expiries
+            from Friday 20:00 UTC, when the feeds have already gone quiet.
+          </li>
           <li>Quotes reject stale feeds (older than maxPriceAge, 26h) and invalid answers.</li>
           <li>
             Answers of 0 or less, or of $1,000,000 or more, are invalid and skipped, never rescaled. Early mainnet rounds
@@ -195,7 +206,9 @@ export default function Page() {
         <ul className="mt-2 space-y-1.5 text-sm">
           <li><a className="link" href="https://github.com/bchuazw/afterhours" target="_blank" rel="noreferrer">github.com/bchuazw/afterhours</a> · contracts, Stylus pricer, keeper, this app</li>
           <li><a className="link" href="https://docs.robinhood.com/chain" target="_blank" rel="noreferrer">Robinhood Chain docs</a></li>
-          <li><a className="link" href="https://explorer.testnet.chain.robinhood.com" target="_blank" rel="noreferrer">Testnet explorer</a></li>
+          {EXPLORER_URL && (
+            <li><a className="link" href={EXPLORER_URL} target="_blank" rel="noreferrer">{CHAIN_NAME} explorer</a></li>
+          )}
           <li><a className="link" href="https://docs.arbitrum.io/stylus/stylus-gentle-introduction" target="_blank" rel="noreferrer">Arbitrum Stylus</a></li>
         </ul>
       </section>

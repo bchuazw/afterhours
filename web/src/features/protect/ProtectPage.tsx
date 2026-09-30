@@ -7,13 +7,14 @@ import { COMPANY, deployment, isZero, type UnderlyingKey } from "@/lib/deploymen
 import { useFeed } from "@/lib/hooks/useFeed";
 import { presetStrike, strikeBounds, useMarketConfig, useUnderlyingInfo } from "@/lib/hooks/useMarket";
 import { useErc20Balance } from "@/lib/hooks/useToken";
+import { useActiveSeries, type SeriesInfo } from "@/lib/hooks/useSeries";
 import { useNow, useMounted } from "@/lib/hooks/useNow";
 import { useDebounced } from "@/lib/hooks/useDebounce";
 import {
   feedStatus,
   fromDatetimeLocal,
-  isClosedAt,
-  nextOpenAt,
+  isDarkAt,
+  nextLiveAt,
   presetExpiry,
   toDatetimeLocal,
   type ExpiryPreset,
@@ -26,13 +27,19 @@ import { Sparkline } from "./Sparkline";
 import { RecentProtection } from "./RecentProtection";
 
 type StrikeMode = 95 | 90 | 85 | "custom";
-type ExpiryMode = ExpiryPreset | "custom";
+/** "series" = strike and expiry copied from an open series (see joinSeries), so the buy joins it. */
+type ExpiryMode = ExpiryPreset | "custom" | "series";
 
-const EXPIRY_PRESETS: { id: ExpiryMode; label: string; hint: string }[] = [
+/**
+ * Presets land on listed times (weekday 19:00 UTC, the last whole hour of the US regular session in
+ * both DST regimes, or Monday 13:30 UTC), so everyone who picks the same preset that day shares one
+ * series instead of opening a new one per minute. None of them fall in the Friday-evening dark slice.
+ */
+const EXPIRY_PRESETS: { id: ExpiryPreset | "custom"; label: string; hint: string }[] = [
   { id: "monday", label: "Monday open", hint: "Next Monday 13:30 UTC at least the minimum tenor away" },
-  { id: "friday", label: "Friday close", hint: "Next Friday 20:00 UTC at least the minimum tenor away" },
-  { id: "7d", label: "7 days", hint: "Moved to Monday 01:00 UTC if it would land in the closed window" },
-  { id: "30d", label: "30 days", hint: "Capped at the max tenor and kept out of the closed window" },
+  { id: "friday", label: "Friday close", hint: "Next Friday 19:00 UTC, the last hour of the regular session before the feeds go quiet for the weekend" },
+  { id: "7d", label: "7 days", hint: "First weekday 19:00 UTC at least 7 days out (weekends roll to Monday)" },
+  { id: "30d", label: "30 days", hint: "Last weekday 19:00 UTC within the max tenor" },
   { id: "custom", label: "Custom", hint: "" },
 ];
 
@@ -82,35 +89,37 @@ export function ProtectPage() {
   }, [strikeMode, customStrike, strikeParsed, bounds, spot, config]);
   const strike8 = strikeError ? undefined : strikeParsed;
 
-  // ---- expiry: presets are computed from now + minTenor and never land in the closed window ----
+  // ---- expiry: presets are computed from now + minTenor and never land in the dark window ----
   const [expiryMode, setExpiryMode] = useState<ExpiryMode>("monday");
   const [customExpiry, setCustomExpiry] = useState("");
   const [presetTs, setPresetTs] = useState<number | undefined>(undefined);
+  // The open series whose strike and expiry were copied in (expiryMode === "series").
+  const [joined, setJoined] = useState<SeriesInfo | undefined>(undefined);
   const computePreset = useCallback(
     (m: ExpiryPreset) => presetExpiry(m, Math.floor(Date.now() / 1000), config.minTenor, config.maxTenor),
     [config.minTenor, config.maxTenor],
   );
   // Recompute once the clock (or a config change) makes the current preset invalid: too close to now,
-  // beyond maxTenor or inside the closed window. Also fills the first value after mount.
+  // beyond maxTenor or inside the dark window. Also fills the first value after mount.
   useEffect(() => {
-    if (!now || expiryMode === "custom") return;
+    if (!now || expiryMode === "custom" || expiryMode === "series") return;
     const invalid =
       presetTs === undefined ||
       presetTs < now + config.minTenor + 60 ||
       presetTs > now + config.maxTenor ||
-      isClosedAt(presetTs);
+      isDarkAt(presetTs);
     if (!invalid) return;
     const next = computePreset(expiryMode);
     if (next !== presetTs) setPresetTs(next);
   }, [now, expiryMode, presetTs, config.minTenor, config.maxTenor, computePreset]);
 
-  const expiry = expiryMode === "custom" ? fromDatetimeLocal(customExpiry) : presetTs;
+  const expiry = expiryMode === "custom" ? fromDatetimeLocal(customExpiry) : expiryMode === "series" ? joined?.expiry : presetTs;
 
-  const choosePreset = (m: ExpiryMode) => {
+  const choosePreset = (m: ExpiryPreset | "custom") => {
     if (m === "custom") {
       if (!customExpiry) {
         const t = Math.floor(Date.now() / 1000);
-        setCustomExpiry(toDatetimeLocal(expiry ?? computePreset("7d") ?? nextOpenAt(t + 3 * 86400)));
+        setCustomExpiry(toDatetimeLocal(expiry ?? computePreset("7d") ?? nextLiveAt(t + 3 * 86400)));
       }
     } else {
       // Every click recomputes from the current time.
@@ -119,9 +128,36 @@ export function ProtectPage() {
     setExpiryMode(m);
   };
 
+  // Copy an open series' exact strike and expiry so the buy joins it rather than opening a new one.
+  const joinSeries = (s: SeriesInfo) => {
+    setJoined(s);
+    setExpiryMode("series");
+    setStrikeMode("custom");
+    setCustomStrike(formatUnits(s.strike, PRICE_DECIMALS));
+  };
+
+  // A joined series belongs to one underlying: switching underlying drops it and returns to the defaults.
+  const selectUnderlying = (k: UnderlyingKey) => {
+    setKey(k);
+    if (expiryMode === "series") {
+      setJoined(undefined);
+      setStrikeMode(90);
+      setCustomStrike("");
+      choosePreset("monday");
+    }
+  };
+
+  // Open series of this underlying that can still be bought (expiry at least minTenor away).
+  const active = useActiveSeries(u.id);
+  const joinable = useMemo(() => {
+    const t = now || Math.floor(Date.now() / 1000);
+    return (active.series ?? []).filter((s) => s.expiry >= t + config.minTenor + 60);
+  }, [active.series, now, config.minTenor]);
+  const atSeriesCap = active.series !== undefined && active.series.length >= config.maxActiveSeries;
+
   const customExpiryError =
-    expiryMode === "custom" && expiry !== undefined && isClosedAt(expiry)
-      ? `That time is inside the closed window (Saturday 00:00 to Monday 01:00 UTC), when the feeds are dark and no series may expire. Pick a time before Saturday 00:00 UTC or from ${fmtUtc(nextOpenAt(expiry))} on.`
+    expiryMode === "custom" && expiry !== undefined && isDarkAt(expiry)
+      ? `That time is between Friday 20:00 UTC and Monday 01:00 UTC, when the feeds are dark. A series expiring then would be priced with no closed-market time but settle on the Monday reopen print. Pick a time before Friday 20:00 UTC or from ${fmtUtc(nextLiveAt(expiry))} on.`
       : undefined;
 
   // ---- units (1e18 = protection on one Stock Token) ----
@@ -142,7 +178,7 @@ export function ProtectPage() {
       return now ? "No preset expiry fits the tenor limits right now. Pick a custom expiry." : undefined;
     }
     if (customExpiryError) return customExpiryError;
-    if (isClosedAt(expiry)) return "That expiry is inside the closed window (Saturday 00:00 to Monday 01:00 UTC).";
+    if (isDarkAt(expiry)) return "That expiry is while the feeds are dark (Friday 20:00 UTC to Monday 01:00 UTC).";
     if (expiry < t + config.minTenor) return `Expiry must be at least ${fmtDuration(config.minTenor)} from now.`;
     if (expiry > t + config.maxTenor) return `Expiry must be within ${fmtDuration(config.maxTenor)} from now.`;
     return undefined;
@@ -169,7 +205,7 @@ export function ProtectPage() {
         </div>
       </div>
 
-      <UnderlyingSelector value={key} onChange={setKey} disabled={inFlight} />
+      <UnderlyingSelector value={key} onChange={selectUnderlying} disabled={inFlight} />
 
       <div className="grid gap-4 lg:grid-cols-[1.35fr_1fr]">
         <Card className="space-y-5">
@@ -270,13 +306,62 @@ export function ProtectPage() {
               </div>
               {customExpiryError ? (
                 <p className="mt-1.5 text-[11px] text-neg">{customExpiryError}</p>
+              ) : expiryMode === "series" && joined ? (
+                <p className="mt-1.5 text-[11px] text-dim">
+                  Joining the open {fmtPrice(joined.strike)} series expiring {fmtTime(joined.expiry)}. Changing the strike or
+                  expiry opens a new series instead.
+                </p>
               ) : (
                 <p className="mt-1.5 text-[11px] text-dim">
-                  No series may expire while the feeds are dark (Saturday 00:00 to Monday 01:00 UTC), so every expiry
-                  is followed by a live print.
+                  No expiry is offered while the feeds are dark (Friday 20:00 UTC to Monday 01:00 UTC): the feeds stop
+                  printing at the Friday close, so a series expiring then would settle on the Monday reopen print.
+                  Presets land on weekday 19:00 UTC so buyers share series.
                 </p>
               )}
             </div>
+
+            {/* Open series: join one instead of opening a new (underlying, strike, expiry) series */}
+            {active.series !== undefined && active.series.length > 0 && (
+              <div>
+                <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <span className="label">Open series · join one</span>
+                  <span className="num text-xs text-muted">
+                    {active.series.length} of {config.maxActiveSeries}
+                    {joinable.length < active.series.length ? ` · ${joinable.length} joinable` : ""}
+                  </span>
+                </div>
+                {joinable.length === 0 ? (
+                  <p className="text-[11px] text-dim">
+                    Every open {u.symbol} series has expired or is within the minimum tenor, so none can be joined right now.
+                  </p>
+                ) : (
+                  <div className="max-h-44 overflow-y-auto rounded-lg border border-line">
+                    {joinable.map((s) => {
+                      const selected = strike8 === s.strike && expiry === s.expiry;
+                      return (
+                        <button
+                          key={s.id.toString()}
+                          type="button"
+                          data-active={selected}
+                          onClick={() => joinSeries(s)}
+                          title={`Series id ${s.id.toString()}`}
+                          className="flex w-full items-center justify-between gap-3 border-b border-line px-3 py-1.5 text-left text-xs last:border-b-0 hover:bg-panel-2 data-[active=true]:bg-accent/10 data-[active=true]:text-fg"
+                        >
+                          <span className="num">{fmtPrice(s.strike)} put</span>
+                          <span className="text-muted">{fmtTime(s.expiry)}</span>
+                          <span className="num text-dim">{fmtUnits(s.openUnits, 2)} open</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <p className="mt-1.5 text-[11px] text-dim">
+                  {atSeriesCap
+                    ? `${u.symbol} is at the ${config.maxActiveSeries}-series cap: only these strike and expiry pairs can be bought until a series settles.`
+                    : `Series are keyed by (underlying, strike, expiry); ${u.symbol} can have at most ${config.maxActiveSeries} open at once. Joining one keeps that slot free.`}
+                </p>
+              </div>
+            )}
 
             {/* Units */}
             <div>

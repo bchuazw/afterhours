@@ -1,8 +1,8 @@
 {
   "chainId": 46630,
-  "deployBlock": 126654506,
+  "deployBlock": 126244795,
   "deployer": "0xB71f188a5D29e0A6163fD52F445AAbc431E45969",
-  "market": "0x91107801a88baCeC879554e4F0529BF015fA5A03",
+  "market": "0x605dF7bFc5E17fF57A8F9a586Bc5032B797D4fd7",
   "pricer": "0x0006FC22254403d08D0Cdf1b005CD3906Cfc6fE8",
   "underlyings": {
     "AMZN": {
@@ -10,22 +10,22 @@
       "id": 2,
       "stockToken": "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02",
       "symbol": "AMZN",
-      "vault": "0x5B38A7B1A156D20f364579F4E1Bc69F4A6aED5dD"
+      "vault": "0xBbd84594163fCBbcdA65EA02f24D34705CE44bfD"
     },
     "NVDA": {
       "feed": "0x6A8617F52C8A3fF40dB4a4cE99FBB20d5c0ABAF8",
       "id": 3,
       "stockToken": "0x0000000000000000000000000000000000000000",
       "symbol": "NVDA",
-      "vault": "0x82ca92cDcC16Db5872e804c62b725E295DD7683f"
+      "vault": "0x3E9E214Ec55b4a2aac9F1914Be0174860045376d"
     },
     "TSLA": {
       "feed": "0x8492cad02fD0bF9358B2988e43039e013D56FfBA",
       "id": 1,
       "stockToken": "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E",
       "symbol": "TSLA",
-      "vault": "0x090EC38Ff24292FFfCB6c2eC1A603A53D39139CD"
+      "vault": "0xC3a577d552d634c659595022fd28c3de49162a04"
     }
   },
-  "usd": "0xf2bb22699B8Ce0F57305738cf47cC7b988929ff8"
+  "usd": "0x8EF7ba8dC2577cD80a1F0fAC610609AC0a4De727"
 }

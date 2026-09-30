@@ -50,7 +50,7 @@ const FRIENDLY: Record<string, (a: Args) => string> = {
   PremiumTooHigh: (a) =>
     `Premium moved above your max (${fmtUsd(big(a, 0))} > ${fmtUsd(big(a, 1))}). Re-quote and retry.`,
   TooManyActiveSeries: () =>
-    "This underlying already has 32 open series. Pick a strike and expiry that already exist, or wait for one to settle.",
+    "This underlying already has 32 open series. Join one of the open series listed under Expiry on the Protect tab, or wait for one to settle.",
   UnknownUnderlying: () => "Unknown underlying.",
   UnderlyingDisabled: () => "Sales for this underlying are currently disabled by the operator.",
   EnforcedPause: () => "The market is paused: new protection cannot be bought. Settlement and claims still work.",

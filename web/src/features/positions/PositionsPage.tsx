@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useAccount, useReadContract, useReadContracts } from "wagmi";
 import { zeroAddress } from "viem";
 import { marketAbi } from "@/abi";
 import { deployment, isDeployed, underlyingById } from "@/lib/deployment";
 import { useClaimed, useProtectionBought, type BoughtLog } from "@/lib/hooks/useLogs";
 import { useNow, useMounted } from "@/lib/hooks/useNow";
-import { useTx, WRONG_CHAIN_HINT, type TxFailure } from "@/lib/hooks/useTx";
+import { useSettle } from "@/lib/hooks/useSettle";
+import { WRONG_CHAIN_HINT } from "@/lib/hooks/useTx";
 import { fmtDuration, fmtPrice, fmtTime, fmtUnits, fmtUsd } from "@/lib/format";
 import { Card, ErrorNote, InfoNote, Pill, Skeleton } from "@/components/ui";
 
@@ -35,15 +36,11 @@ type Position = {
 const proRata = (owed: bigint, units: bigint, openUnits: bigint) =>
   units === 0n || openUnits === 0n ? 0n : units === openUnits ? owed : (owed * units) / openUnits;
 
-/** Errors from settle() that deserve a note on the card, not just a toast. */
-const SETTLE_NOTES = new Set(["SettleWalkTooLong", "AwaitingPostExpiryPrint", "FeedPaused"]);
-
 export function PositionsPage() {
   const mounted = useMounted();
   const { address, isConnected } = useAccount();
   const now = useNow(1000);
-  const { send, busy, wrongChain } = useTx();
-  const [notes, setNotes] = useState<Record<string, string>>({});
+  const { settle: settleSeries, notes, send, busy, wrongChain } = useSettle();
 
   // Discover every series that has ever been bought; the wallet may hold transferred positions too.
   const all = useProtectionBought(undefined);
@@ -127,22 +124,7 @@ export function PositionsPage() {
     return out.sort((a, b) => rank[a.status] - rank[b.status] || a.expiry - b.expiry);
   }, [balanceRead.data, seriesReads.data, address, series, claimed.data, now]);
 
-  const noteFor = (p: Position) => (f: TxFailure) => {
-    if (f.errorName && SETTLE_NOTES.has(f.errorName)) setNotes((n) => ({ ...n, [p.seriesId.toString()]: f.message }));
-  };
-
-  const settle = async (p: Position) => {
-    setNotes((n) => {
-      const next = { ...n };
-      delete next[p.seriesId.toString()];
-      return next;
-    });
-    await send(
-      `Settle ${underlyingById(p.underlyingId)?.symbol ?? ""} series`,
-      { address: deployment.market, abi: marketAbi, functionName: "settle", args: [p.seriesId] },
-      { onError: noteFor(p) },
-    );
-  };
+  const settle = (p: Position) => settleSeries(p.seriesId, underlyingById(p.underlyingId)?.symbol);
   const claim = (p: Position) =>
     send(p.claimable > 0n ? `Claim ${fmtUsd(p.claimable)}` : "Burn worthless position", {
       address: deployment.market,
