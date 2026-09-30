@@ -49,6 +49,8 @@ const FRIENDLY: Record<string, (a: Args) => string> = {
     `The pricer quoted off ${fmtPrice(big(a, 0))} but the feed spot is ${fmtPrice(big(a, 1))}. Wait for the next print and retry.`,
   PremiumTooHigh: (a) =>
     `Premium moved above your max (${fmtUsd(big(a, 0))} > ${fmtUsd(big(a, 1))}). Re-quote and retry.`,
+  SeriesTooSmall: (a) =>
+    `Opening a new series needs at least ${fmtUsd(big(a, 1))} of premium; this quote is ${fmtUsd(big(a, 0))}. Protect more tokens, pick a longer expiry, or join an open series (no minimum).`,
   TooManyActiveSeries: () =>
     "This underlying already has 32 open series. Join one of the open series listed under Expiry on the Protect tab, or wait for one to settle.",
   UnknownUnderlying: () => "Unknown underlying.",

@@ -161,7 +161,9 @@ export function ProtectPage() {
       : undefined;
 
   // ---- units (1e18 = protection on one Stock Token) ----
-  const [units, setUnits] = useState("1");
+  // 10 tokens by default: a new series needs a minimum premium (SeriesTooSmall otherwise), and a
+  // single token's short-dated protection is usually below it.
+  const [units, setUnits] = useState("10");
   const units18 = parseDecimal(units, UNIT_DECIMALS);
 
   // ---- validation ----
