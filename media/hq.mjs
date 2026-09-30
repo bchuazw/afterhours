@@ -51,7 +51,8 @@ try {
     if (!ok) throw new Error("not logged in");
     await page.getByRole("button", { name: "Demo Video" }).click();
     await sleep(800);
-    await page.locator("input[type=file]").nth(2).setInputFiles(arg);
+    // With all 4 images uploaded the images input disappears, so pick the video input by its accept attribute.
+    await page.locator('input[type=file][accept*="video"]').first().setInputFiles(arg);
     for (let i = 0; i < 60; i++) {
       await sleep(5000);
       const t = await page.locator("main").innerText();
@@ -84,19 +85,42 @@ try {
     await sleep(5000);
     await page.getByRole("button", { name: /Please select|AfterHours/ }).first().click();
     await sleep(1000);
-    const items = await page.getByRole("menuitem").evaluateAll((els) => els.map((e) => ({ text: e.innerText.replace(/
-/g, " | "), disabled: e.getAttribute("aria-disabled"), title: e.getAttribute("title") })));
+    const items = await page.getByRole("menuitem").evaluateAll((els) => els.map((e) => ({ text: e.innerText.split(String.fromCharCode(10)).join(" | "), disabled: e.getAttribute("aria-disabled"), title: e.getAttribute("title") })));
     await page.keyboard.press("Escape");
     await page.goto(PROJECT, { waitUntil: "domcontentloaded" });
     await sleep(4000);
-    const btn = page.getByRole("button", { name: /Incomplete Project|Complete/ }).first();
-    const badge = await btn.innerText().catch(() => "?");
-    await btn.click().catch(() => {});
-    await sleep(1500);
-    const popover = await page.locator('[role="dialog"], [role="tooltip"], [data-radix-popper-content-wrapper]').allInnerTexts().catch(() => []);
+    const badgeText = page.getByText(/Incomplete Project|Complete Project/).first();
+    await badgeText.waitFor({ timeout: 20000 }).catch(() => {});
+    const btn = badgeText.locator("xpath=ancestor-or-self::button[1]").first();
+    const badge = await btn.innerText({ timeout: 5000 }).catch(() => "?");
+    await btn.click({ force: true }).catch(() => {});
+    await sleep(2000);
+    const popover = await page.locator('[role="dialog"], [role="tooltip"], [data-radix-popper-content-wrapper], [data-state="open"]').allInnerTexts().catch(() => []);
+    // Any inline hints about required fields.
+    const hints = await page.locator("main").innerText().then((t) => (t.match(/[^\n]*(required|Required|missing|Missing|incomplete)[^\n]*/g) || []).slice(0, 12));
+    popover.push(...hints);
     const walletSection = await page.locator("main").innerText().then((t) => t.slice(t.indexOf("Wallet"), t.indexOf("Wallet") + 200));
-    console.log(JSON.stringify({ items, badge: badge.replace(/
-/g, " "), popover: popover.map((p) => p.slice(0, 800)), walletSection }, null, 2));
+    console.log(JSON.stringify({ items, badge: badge.split(String.fromCharCode(10)).join(" "), popover: popover.map((p) => p.slice(0, 800)), walletSection }, null, 2));
+  } else if (cmd === "checklist") {
+    await page.goto(PROJECT, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Save Edit" }).first().waitFor({ timeout: 30000 });
+    await sleep(2500);
+    const before = await page.locator("body").innerText();
+    const badge = page.locator("text=Incomplete Project").first();
+    const html = await badge.evaluate((e) => (e.closest("button") || e.parentElement).outerHTML.slice(0, 600)).catch(() => "?");
+    const box = await badge.boundingBox();
+    if (box) { await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await sleep(800); await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2); }
+    await sleep(2000);
+    const after = await page.locator("body").innerText();
+    const beforeLines = new Set(before.split("\n"));
+    const added = after.split("\n").filter((l) => l.trim() && !beforeLines.has(l)).slice(0, 60);
+    const tabs = {};
+    for (const tab of ["Checkpoints", "Team"]) {
+      await page.getByRole("tab", { name: tab }).click().catch(() => {});
+      await sleep(2000);
+      tabs[tab] = (await page.locator("main").innerText()).slice(0, 1200);
+    }
+    console.log(JSON.stringify({ badgeHtml: html, added, tabs }, null, 2));
   } else if (cmd === "submit-form") {
     const f = JSON.parse(readFileSync(arg, "utf8"));
     await page.goto(SUBMIT, { waitUntil: "domcontentloaded" });
@@ -106,8 +130,9 @@ try {
     await page.getByRole("button", { name: /Please select|AfterHours/ }).first().click();
     await sleep(800);
     await page.getByRole("menuitem", { name: /AfterHours/ }).first().click();
-    await sleep(800);
-    const inputs = main.locator("input[type=text]");
+    await sleep(1500);
+    await page.getByText(/contract address/i).first().waitFor({ timeout: 30000 });
+    const inputs = main.locator('input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([placeholder*="Search"])');
     await inputs.first().fill(f.contractAddress);
     for (const track of f.tracks) {
       const cb = page.getByRole("checkbox", { name: track }).first();
@@ -130,16 +155,25 @@ try {
     console.log(JSON.stringify(state, null, 2));
     if (flag === "--submit") {
       await page.getByRole("button", { name: "Submit", exact: true }).click();
-      await sleep(6000);
-      const dlg = await page.locator('[role="dialog"]').allInnerTexts().catch(() => []);
-      console.log(JSON.stringify({ afterSubmitUrl: page.url(), dialog: dlg.map((d) => d.slice(0, 500)), body: (await page.locator("body").innerText()).slice(0, 600) }, null, 2));
-      // confirm dialogs, if any
-      const confirm = page.getByRole("button", { name: /^(Confirm|Yes|Submit|OK)$/ }).first();
-      if (await confirm.count()) {
-        await confirm.click();
+      await sleep(5000);
+      // HackQuest's modal is a fixed full-screen overlay (not role=dialog): read it, then act only inside it.
+      const overlay = page.locator("div.fixed.inset-0").last();
+      const readOverlay = async () => ({
+        text: (await overlay.innerText().catch(() => "")).replace(/\n+/g, " | ").slice(0, 700),
+        buttons: await overlay.locator("button").allInnerTexts().catch(() => []),
+      });
+      let o = await readOverlay();
+      console.log(JSON.stringify({ afterSubmitUrl: page.url(), overlay: o }, null, 2));
+      for (let i = 0; i < 3 && o.buttons.length; i++) {
+        const btn = overlay.locator("button").filter({ hasText: /confirm|yes|submit|ok|got it|done|continue|back to/i }).first();
+        if (!(await btn.count())) break;
+        const label = await btn.innerText();
+        await btn.click();
         await sleep(6000);
-        console.log(JSON.stringify({ afterConfirmUrl: page.url(), body: (await page.locator("body").innerText()).slice(0, 600) }, null, 2));
+        o = await readOverlay();
+        console.log(JSON.stringify({ clicked: label, url: page.url(), overlay: o }, null, 2));
       }
+      console.log(JSON.stringify({ finalUrl: page.url(), body: (await page.locator("body").innerText()).slice(0, 500).replace(/\n+/g, " | ") }, null, 2));
     }
   }
 } finally {
