@@ -29,8 +29,14 @@ import {ProtectionVault} from "./ProtectionVault.sol";
 ///         and already include the token's uiMultiplier, so corporate actions do not change units.
 ///
 ///         Sales stop while the feeds are dark (Saturday 00:00 UTC -> Monday 01:00 UTC, the union of the
-///         Friday 20:00 ET -> Sunday 20:00 ET window across US daylight saving) and no series may expire
-///         inside that window, so every expiry is followed by a live print.
+///         Friday 20:00 ET -> Sunday 20:00 ET window across US daylight saving). Expiries sit on a
+///         30-minute grid and may not fall from Friday 20:00 UTC (the regular-session close, after which
+///         the live feeds print at most once) to Monday 01:00 UTC, so every expiry is followed by a
+///         live print before the weekend gap and is never settled on the Monday reopen.
+///
+///         Admin changes that can make writers' exposure riskier (pricer, pricing parameters, config,
+///         a lower series minimum) are scheduled with `schedule` and executed after ADMIN_DELAY of
+///         open-market time, within ADMIN_WINDOW. Changes that only reduce risk apply at once.
 contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, IMarketVaultState {
     using SafeERC20 for IERC20;
 
@@ -55,6 +61,8 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
         bool enabled;
     }
 
+    /// @dev `timeValue` and `accrualRate` are appended after the v2 fields so positional decoders of
+    ///      getSeries keep working.
     struct Series {
         uint32 underlyingId;
         uint64 expiry;
@@ -66,6 +74,8 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
         uint256 premium; // exact net premium sent to the vault by buys (asset units)
         uint256 settlePrice; // 8 decimals, 0 until settled
         uint256 owed; // payout escrowed in this contract for unclaimed units (asset units)
+        uint256 timeValue; // net premium above the intrinsic value collected at sale (asset units)
+        uint256 accrualRate; // sum over buys of ceil(timeValue_b * 1e18 / (expiry - t_b)); see unearnedOf
     }
 
     struct Quote {
@@ -84,29 +94,38 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
     uint256 public constant MAX_SETTLE_WALK = 300;
     /// @notice Strikes are whole dollars.
     uint256 public constant STRIKE_TICK = 1e8;
+    /// @notice Expiries sit on a 30-minute grid so buyers share series instead of opening one per minute.
+    uint256 public constant EXPIRY_GRID = 30 minutes;
     /// @notice Premium floor enforced independently of the pricer: intrinsic + 5 bps of spot per unit.
     uint256 public constant MIN_PREMIUM_BPS = 5;
     /// @notice Bound on open series per underlying (keeps vault mark-to-market O(32)).
     uint256 public constant MAX_ACTIVE_SERIES = 32;
-    /// @notice Delay between proposing and accepting a new pricer.
-    uint256 public constant PRICER_TIMELOCK = 2 days;
+    /// @notice Open-market time (outside isClosedAt) between scheduling a risk-increasing admin change
+    ///         and executing it. Writers can always exit during this time.
+    uint256 public constant ADMIN_DELAY = 2 days;
+    /// @notice Wall-clock window after a scheduled change's eta in which it may still be executed.
+    uint256 public constant ADMIN_WINDOW = 3 days;
     /// @dev 8-decimal answers at or above $1,000,000 are invalid (e.g. mis-scaled genesis-era rounds).
     int256 internal constant MAX_ANSWER = 1e14;
     uint256 internal constant INDEX_MASK = type(uint64).max;
+    uint256 internal constant WAD = 1e18;
 
     IERC20 public immutable asset; // quote asset (USDG / test USD)
     /// @dev price8 * units18 / _unitDiv = asset units; _unitDiv = 10 ** (26 - asset decimals).
     uint256 internal immutable _unitDiv;
+    /// @dev One dollar in asset units.
+    uint256 internal immutable _usdUnit;
     IPricer public pricer;
-    IPricer public pendingPricer;
-    uint64 public pendingPricerEta;
     address public treasury;
-    uint16 public protocolFeeBps; // taken from premium
+    /// @notice Protocol fee in bps, taken from the *time value* of each premium (never from the intrinsic
+    ///         value, which the vault must be able to pay back at expiry).
+    uint16 public protocolFeeBps;
 
     uint64 public minTenor = 1 hours;
     uint64 public maxTenor = 30 days;
-    /// @notice Buys are rejected if the feed's latest print is older than this (the closed window already
-    ///         blocks weekend sales, so this only has to cover weekday gaps and holidays).
+    /// @notice Buys are rejected and the vault closes if the feed's latest print is older than this. Capped
+    ///         at 36 hours so a Friday print can never count as fresh at the Monday 01:00 UTC reopen (the
+    ///         shortest Friday-print-to-reopen gap is 48 hours).
     uint64 public maxPriceAge = 26 hours;
     /// @notice If no post-expiry print arrives within a series' grace (snapshot of this at creation), the
     ///         series may be settled at the latest valid price so collateral never strands.
@@ -114,6 +133,12 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
     /// @notice Strike bounds relative to the feed spot, in bps.
     uint16 public minStrikeBps = 5_000;
     uint16 public maxStrikeBps = 12_000;
+    /// @notice Smallest (gross) premium a buy that opens a new series must pay, asset units. Top-ups of an
+    ///         existing series have no minimum. Stops dust buys from filling MAX_ACTIVE_SERIES for free.
+    uint256 public minSeriesPremium;
+
+    /// @notice keccak256(calldata) of a scheduled admin change => timestamp from which it may execute.
+    mapping(bytes32 => uint64) public scheduledEta;
 
     uint32 public underlyingCount;
     mapping(uint32 => Underlying) internal _underlyings;
@@ -146,9 +171,12 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
         uint256 indexed seriesId, uint256 settlePrice, uint80 roundId, bool fallbackUsed, uint256 owed, uint256 released
     );
     event Claimed(uint256 indexed seriesId, address indexed holder, uint256 units, uint256 payout);
-    event PricerProposed(address indexed pricer, uint64 eta);
+    event ChangeScheduled(bytes32 indexed id, bytes data, uint64 eta);
+    event ChangeCancelled(bytes32 indexed id);
+    event ChangeExecuted(bytes32 indexed id);
     event PricerUpdated(address pricer);
     event ConfigUpdated();
+    event MinSeriesPremiumUpdated(uint256 minSeriesPremium);
 
     error UnknownUnderlying();
     error UnderlyingDisabled();
@@ -157,6 +185,7 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
     error BadExpiry();
     error BadStrike();
     error ZeroUnits();
+    error SeriesTooSmall(uint256 premium, uint256 minimum);
     error StalePrice(uint256 updatedAt);
     error FeedPaused();
     error InvalidAnswer();
@@ -173,8 +202,9 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
     error BadParams();
     error BadFeed();
     error BadVault();
-    error NoPendingPricer();
-    error PricerTimelocked(uint64 eta);
+    error NotScheduled(bytes32 id);
+    error Timelocked(bytes32 id, uint64 eta);
+    error ScheduleExpired(bytes32 id, uint64 eta);
 
     // ---------------------------------------------------------------------------------------------
     // Constructor / admin
@@ -186,7 +216,10 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
     {
         if (treasury_ == address(0)) revert BadConfig();
         asset = asset_;
-        _unitDiv = 10 ** (26 - uint256(IERC20Metadata(address(asset_)).decimals()));
+        uint256 unitDiv = 10 ** (26 - uint256(IERC20Metadata(address(asset_)).decimals()));
+        _unitDiv = unitDiv;
+        _usdUnit = 1e26 / unitDiv;
+        minSeriesPremium = 5 * (1e26 / unitDiv);
         pricer = pricer_;
         treasury = treasury_;
     }
@@ -213,35 +246,50 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
         emit UnderlyingAdded(id, symbol, address(feed), address(vault), stockToken);
     }
 
+    /// @notice Schedule a risk-increasing admin change: `data` is the exact calldata of the later call
+    ///         (setPricer, setConfig, setUnderlying or setMinSeriesPremium). It becomes executable once
+    ///         ADMIN_DELAY of open-market time has passed and lapses ADMIN_WINDOW after that.
+    function schedule(bytes calldata data) external onlyOwner returns (bytes32 id, uint64 eta) {
+        id = keccak256(data);
+        eta = uint64(etaAfterOpenSeconds(block.timestamp, ADMIN_DELAY));
+        scheduledEta[id] = eta;
+        emit ChangeScheduled(id, data, eta);
+    }
+
+    /// @notice Drop a scheduled change.
+    function cancel(bytes32 id) external onlyOwner {
+        delete scheduledEta[id];
+        emit ChangeCancelled(id);
+    }
+
+    /// @notice Swap the pricing engine. Always scheduled: the delay is writers' notice of a repricing.
+    function setPricer(IPricer newPricer) external onlyOwner {
+        if (address(newPricer) == address(0)) revert BadConfig();
+        _executeScheduled();
+        pricer = newPricer;
+        emit PricerUpdated(address(newPricer));
+    }
+
     /// @notice Enable/disable sales and update pricing parameters. Disabling only blocks new buys;
-    ///         settle / settleAt / claim always work.
+    ///         settle / settleAt / claim always work. Parameter changes that can only raise premiums
+    ///         (higher volFloor / volCap / closedVolMult / spreadBps, same lookback) apply at once; any
+    ///         other change must have been scheduled.
     function setUnderlying(uint32 id, bool enabled, PricingParams calldata params) external onlyOwner {
         if (id == 0 || id > underlyingCount) revert UnknownUnderlying();
         _checkParams(params);
-        _underlyings[id].enabled = enabled;
-        _underlyings[id].params = params;
+        Underlying storage u = _underlyings[id];
+        PricingParams memory old = u.params;
+        bool safer = params.lookback == old.lookback && params.volFloor >= old.volFloor && params.volCap >= old.volCap
+            && params.closedVolMult >= old.closedVolMult && params.spreadBps >= old.spreadBps;
+        if (!safer) _executeScheduled();
+        u.enabled = enabled;
+        u.params = params;
         emit UnderlyingUpdated(id, enabled, params);
     }
 
-    /// @notice Start the timelock for a new pricer. Proposing address(0) cancels a pending proposal.
-    function proposePricer(IPricer newPricer) external onlyOwner {
-        uint64 eta = uint64(block.timestamp + PRICER_TIMELOCK);
-        pendingPricer = newPricer;
-        pendingPricerEta = eta;
-        emit PricerProposed(address(newPricer), eta);
-    }
-
-    /// @notice Activate the pending pricer once its timelock has elapsed.
-    function acceptPricer() external onlyOwner {
-        IPricer next = pendingPricer;
-        if (address(next) == address(0)) revert NoPendingPricer();
-        if (block.timestamp < pendingPricerEta) revert PricerTimelocked(pendingPricerEta);
-        pricer = next;
-        delete pendingPricer;
-        delete pendingPricerEta;
-        emit PricerUpdated(address(next));
-    }
-
+    /// @notice Update market config. A change that only tightens the market for buyers (lower fee, shorter
+    ///         maxTenor, narrower strikes, longer minTenor, fresher prices, same treasury and grace) applies
+    ///         at once; any other change must have been scheduled.
     function setConfig(
         address treasury_,
         uint16 protocolFeeBps_,
@@ -254,10 +302,14 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
     ) external onlyOwner {
         if (
             treasury_ == address(0) || protocolFeeBps_ > 2_000 || minTenor_ < 1 hours || minTenor_ > 1 days
-                || maxTenor_ < minTenor_ || maxTenor_ > 90 days || maxPriceAge_ < 1 hours || maxPriceAge_ > 4 days
+                || maxTenor_ < minTenor_ || maxTenor_ > 90 days || maxPriceAge_ < 1 hours || maxPriceAge_ > 36 hours
                 || settlementGrace_ < 4 days || settlementGrace_ > 14 days || minStrikeBps_ < 3_000
                 || minStrikeBps_ > 10_000 || maxStrikeBps_ < minStrikeBps_ || maxStrikeBps_ > 15_000
         ) revert BadConfig();
+        bool safer = treasury_ == treasury && protocolFeeBps_ <= protocolFeeBps && minTenor_ >= minTenor
+            && maxTenor_ <= maxTenor && maxPriceAge_ <= maxPriceAge && settlementGrace_ == settlementGrace
+            && minStrikeBps_ >= minStrikeBps && maxStrikeBps_ <= maxStrikeBps;
+        if (!safer) _executeScheduled();
         treasury = treasury_;
         protocolFeeBps = protocolFeeBps_;
         minTenor = minTenor_;
@@ -267,6 +319,15 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
         minStrikeBps = minStrikeBps_;
         maxStrikeBps = maxStrikeBps_;
         emit ConfigUpdated();
+    }
+
+    /// @notice Set the premium a series-opening buy must pay (asset units, at most $1,000). Raising it
+    ///         applies at once; lowering it must have been scheduled.
+    function setMinSeriesPremium(uint256 minSeriesPremium_) external onlyOwner {
+        if (minSeriesPremium_ > 1_000 * _usdUnit) revert BadConfig();
+        if (minSeriesPremium_ < minSeriesPremium) _executeScheduled();
+        minSeriesPremium = minSeriesPremium_;
+        emit MinSeriesPremiumUpdated(minSeriesPremium_);
     }
 
     /// @notice Pausing blocks new buys only; settlement and claims keep working.
@@ -287,6 +348,30 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
     function isClosedAt(uint256 ts) public pure returns (bool) {
         uint256 dow = (ts / 1 days + 4) % 7; // 0 = Sunday .. 6 = Saturday
         return dow == 6 || dow == 0 || (dow == 1 && ts % 1 days < 1 hours);
+    }
+
+    /// @notice True while the feeds are dark in practice: Friday 20:00 UTC (the regular-session close in
+    ///         US daylight time, after which the live feeds print at most once) through Monday 01:00 UTC.
+    ///         A superset of isClosedAt. No expiry may fall in here: it would be priced with no
+    ///         closed-market time yet settle on the Monday reopen print.
+    function isDarkAt(uint256 ts) public pure returns (bool) {
+        uint256 dow = (ts / 1 days + 4) % 7;
+        return (dow == 5 && ts % 1 days >= 20 hours) || isClosedAt(ts);
+    }
+
+    /// @notice First timestamp at or after `from` by which `openSeconds` of open-market time (outside
+    ///         isClosedAt) have elapsed.
+    function etaAfterOpenSeconds(uint256 from, uint256 openSeconds) public pure returns (uint256 t) {
+        t = from;
+        while (openSeconds > 0) {
+            if (isClosedAt(t)) {
+                t = _nextOpen(t);
+            } else {
+                uint256 step = Math.min(openSeconds, _nextClose(t) - t);
+                t += step;
+                openSeconds -= step;
+            }
+        }
     }
 
     function seriesId(uint32 underlyingId, uint256 strike, uint64 expiry) public pure returns (uint256) {
@@ -312,9 +397,16 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
         return _isPaused(_underlyings[underlyingId]);
     }
 
+    /// @notice Time value of `id` not yet earned by writers: each buy's net time value is earned linearly
+    ///         from its sale to expiry, so unearned = min(timeValue, (expiry - now) * accrualRate / 1e18).
+    function unearnedOf(uint256 id) public view returns (uint256) {
+        return _unearned(_series[id]);
+    }
+
     /// @notice Quote protection for `units` (1e18 = 1 Stock Token) of `underlyingId` at `strike` until
     ///         `expiry`. Runs every check buyProtection runs.
-    /// @return premium       Total premium in asset units (rounded up; protocol fee is carved out of it).
+    /// @return premium       Total premium in asset units (rounded up; protocol fee is carved out of its
+    ///                       time value).
     /// @return collateral    Collateral the vault must lock (strike * units, rounded up), asset units.
     /// @return spot          Feed spot used, 8 decimals.
     /// @return vol           Effective annualized vol, 1e18 = 100%.
@@ -338,10 +430,12 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
     }
 
     /// @inheritdoc IMarketVaultState
-    /// @dev liability = sum over active series of max(0, min(locked, intrinsic(spot) * openUnits) - premium).
-    ///      Netting each series' own unearned premium keeps the vault's share price unchanged by a sale
-    ///      (premium >= intrinsic is enforced at buy time), so an in-the-money sale cannot be used to push
-    ///      the share price down ahead of a deposit. An invalid latest answer marks at spot 0 (worst case).
+    /// @dev liability = sum over active series of unearned time value + min(locked, intrinsic(spot) * openUnits).
+    ///      A sale adds exactly its net premium to both the vault balance and the liability (intrinsic at
+    ///      sale + time value), so the share price never moves on a buy, however far in the money, and a
+    ///      just-in-time deposit around a buy earns nothing. The time value is then released to writers
+    ///      linearly until expiry, so a deposit or exit just before expiry neither captures nor forfeits
+    ///      the premium of the risk period it did not carry. An invalid latest answer marks at spot 0.
     function vaultState(uint32 underlyingId) external view returns (bool open, uint256 liability) {
         uint256[] storage list = _active[underlyingId];
         uint256 n = list.length;
@@ -354,9 +448,9 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
         for (uint256 i; i < n; ++i) {
             Series storage s = _series[list[i]];
             if (s.expiry <= block.timestamp) open = false;
+            liability += _unearned(s);
             if (s.strike > spot) {
-                uint256 mark = Math.min(s.locked, _toAsset(s.strike - spot, s.openUnits, Math.Rounding.Floor));
-                if (mark > s.premium) liability += mark - s.premium;
+                liability += Math.min(s.locked, _toAsset(s.strike - spot, s.openUnits, Math.Rounding.Floor));
             }
         }
     }
@@ -376,30 +470,60 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
         (Underlying storage u, Quote memory q) = _quote(underlyingId, strike, expiry, units);
         premium = q.premium;
         if (premium > maxPremium) revert PremiumTooHigh(premium, maxPremium);
-        uint256 fee = premium * protocolFeeBps / 10_000;
-        uint256 net = premium - fee;
-
+        uint256 fee;
         id = seriesId(underlyingId, strike, expiry);
-        Series storage s = _series[id];
-        if (s.expiry == 0) _createSeries(id, s, underlyingId, strike, expiry);
-        s.openUnits += units;
-        s.locked += q.collateral;
-        s.premium += net;
+        {
+            uint256 netTimeValue;
+            (fee, netTimeValue) = _split(strike, q.spot, units, premium);
+            Series storage s = _series[id];
+            if (s.expiry == 0) _createSeries(id, s, underlyingId, strike, expiry);
+            _book(s, units, q.collateral, premium - fee, netTimeValue);
+        }
 
         // Interactions: reserve collateral + book unearned premium, move premium, then mint last.
-        ProtectionVault vault = u.vault;
-        vault.lock(q.collateral, net);
-        asset.safeTransferFrom(msg.sender, address(vault), net);
-        if (fee > 0) asset.safeTransferFrom(msg.sender, treasury, fee);
+        {
+            ProtectionVault vault = u.vault;
+            vault.lock(q.collateral, premium - fee);
+            asset.safeTransferFrom(msg.sender, address(vault), premium - fee);
+            if (fee > 0) asset.safeTransferFrom(msg.sender, treasury, fee);
+        }
 
         emit ProtectionBought(id, msg.sender, underlyingId, strike, expiry, units, premium, fee, q.spot, q.vol);
         _mint(msg.sender, id, units, "");
     }
 
+    /// @dev Split a premium into the protocol fee and the net time value. The premium is floored at
+    ///      intrinsic + 5 bps per unit and both are rounded up, so it always covers the intrinsic value; the
+    ///      fee is taken from the time value only, so the vault keeps at least the intrinsic value it has to
+    ///      pay back at expiry.
+    function _split(uint256 strike, uint256 spot, uint256 units, uint256 premium)
+        internal
+        view
+        returns (uint256 fee, uint256 netTimeValue)
+    {
+        uint256 intrinsic = strike > spot ? _toAsset(strike - spot, units, Math.Rounding.Ceil) : 0;
+        uint256 timeValue = premium - intrinsic;
+        fee = timeValue * protocolFeeBps / 10_000;
+        netTimeValue = timeValue - fee;
+    }
+
+    /// @dev Add a buy to its series. The accrual rate is rounded up so that the series' unearned time value
+    ///      equals its time value right after the sale (a JIT deposit around a buy gains nothing).
+    function _book(Series storage s, uint256 units, uint256 collateral, uint256 net, uint256 netTimeValue) internal {
+        s.openUnits += units;
+        s.locked += collateral;
+        s.premium += net;
+        if (netTimeValue > 0) {
+            s.timeValue += netTimeValue;
+            s.accrualRate += Math.mulDiv(netTimeValue, WAD, s.expiry - block.timestamp, Math.Rounding.Ceil);
+        }
+    }
+
     /// @notice Settle a series at the first valid feed print at or after expiry. Anyone may call.
-    /// @dev Walks back from the latest round; reverts SettleWalkTooLong if that takes more than
-    ///      MAX_SETTLE_WALK reads or hits a gap, in which case callers use settleAt with a round hint.
-    ///      With no post-expiry print, waits until expiry + grace and then uses the latest valid answer.
+    /// @dev Walks back from the latest round within its phase; reverts SettleWalkTooLong if that takes
+    ///      more than MAX_SETTLE_WALK reads or hits a gap, in which case callers use settleAt with a round
+    ///      hint. With no post-expiry print, waits until expiry + grace and then uses the latest valid
+    ///      answer. Settlement is always taken within the feed's latest phase.
     function settle(uint256 id) external nonReentrant {
         (Series storage s, IAggregatorV3 feed) = _settleable(id);
         (uint80 roundId, int256 answer,, uint256 updatedAt,) = feed.latestRoundData();
@@ -414,20 +538,25 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
         }
     }
 
-    /// @notice Settle a series at `roundId`, which must be the first print at or after expiry: its answer is
-    ///         valid, it is not newer than the latest round, and it is either the first round of its phase
-    ///         or its predecessor exists and is older than expiry.
+    /// @notice Settle a series at `roundId`, which must be the round settle() would pick: a valid print at
+    ///         or after expiry in the latest round's phase, with every earlier print of that phase at or
+    ///         after expiry invalid (walked back, bounded by MAX_SETTLE_WALK) down to a print older than
+    ///         expiry or the phase start.
     function settleAt(uint256 id, uint80 roundId) external nonReentrant {
         (Series storage s, IAggregatorV3 feed) = _settleable(id);
         (uint80 latestId,,,,) = feed.latestRoundData();
-        uint256 index = roundId & INDEX_MASK;
-        if (roundId > latestId || index == 0) revert BadRoundHint();
+        if (roundId > latestId || roundId & INDEX_MASK == 0 || roundId >> 64 != latestId >> 64) revert BadRoundHint();
         (bool found, int256 answer, uint256 updatedAt) = _tryRound(feed, roundId);
         uint64 expiry = s.expiry;
         if (!found || updatedAt < expiry || !_valid(answer)) revert BadRoundHint();
-        if (index != 1) {
-            (bool ok,, uint256 prevAt) = _tryRound(feed, roundId - 1);
-            if (!ok || prevAt == 0 || prevAt >= expiry) revert BadRoundHint();
+        uint80 r = roundId;
+        for (uint256 i; r & INDEX_MASK != 1; ++i) {
+            if (i == MAX_SETTLE_WALK) revert SettleWalkTooLong();
+            (bool ok, int256 a, uint256 at) = _tryRound(feed, r - 1);
+            if (!ok || at == 0) revert BadRoundHint();
+            if (at < expiry) break;
+            if (_valid(a)) revert BadRoundHint(); // an earlier valid post-expiry print exists
+            --r;
         }
         _finalize(id, s, uint256(answer), roundId, false);
     }
@@ -461,9 +590,10 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
         if (!u.enabled) revert UnderlyingDisabled();
         if (isClosedAt(block.timestamp)) revert MarketClosed();
         if (units == 0) revert ZeroUnits();
-        if (expiry < block.timestamp + minTenor || expiry > block.timestamp + maxTenor || isClosedAt(expiry)) {
-            revert BadExpiry();
-        }
+        if (
+            expiry % EXPIRY_GRID != 0 || expiry < block.timestamp + minTenor || expiry > block.timestamp + maxTenor
+                || isDarkAt(expiry)
+        ) revert BadExpiry();
         uint256 spot = _freshSpot(u);
         if (
             strike == 0 || strike % STRIKE_TICK != 0 || strike * 10_000 < spot * minStrikeBps
@@ -475,6 +605,9 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
         q.spot = spot;
         q.premium = _toAsset(perUnit, units, Math.Rounding.Ceil);
         q.collateral = _toAsset(strike, units, Math.Rounding.Ceil);
+        if (_series[seriesId(underlyingId, strike, expiry)].expiry == 0 && q.premium < minSeriesPremium) {
+            revert SeriesTooSmall(q.premium, minSeriesPremium);
+        }
     }
 
     /// @dev Ask the pricer, insist it priced off the same spot, and floor the premium at intrinsic + 5 bps.
@@ -543,6 +676,37 @@ contract AfterHoursMarket is ERC1155, Ownable2Step, Pausable, ReentrancyGuard, I
         }
         list.pop();
         delete _activePos[id];
+    }
+
+    /// @dev Time value of `s` not yet earned (0 once expired or settled).
+    function _unearned(Series storage s) internal view returns (uint256) {
+        uint64 expiry = s.expiry;
+        if (expiry <= block.timestamp || s.settled) return 0;
+        return Math.min(s.timeValue, (expiry - block.timestamp) * s.accrualRate / WAD);
+    }
+
+    /// @dev Consume the schedule entry for the current call (keccak256 of its calldata).
+    function _executeScheduled() internal {
+        bytes32 id = keccak256(msg.data);
+        uint64 eta = scheduledEta[id];
+        if (eta == 0) revert NotScheduled(id);
+        if (block.timestamp < eta) revert Timelocked(id, eta);
+        if (block.timestamp > eta + ADMIN_WINDOW) revert ScheduleExpired(id, eta);
+        delete scheduledEta[id];
+        emit ChangeExecuted(id);
+    }
+
+    /// @dev End of the closed window containing `t` (Monday 01:00 UTC). `t` must be closed.
+    function _nextOpen(uint256 t) internal pure returns (uint256) {
+        uint256 dow = (t / 1 days + 4) % 7;
+        uint256 day = t - t % 1 days;
+        return day + (dow == 6 ? 2 days : dow == 0 ? 1 days : 0) + 1 hours;
+    }
+
+    /// @dev Start of the next closed window after `t` (Saturday 00:00 UTC). `t` must be open.
+    function _nextClose(uint256 t) internal pure returns (uint256) {
+        uint256 dow = (t / 1 days + 4) % 7; // 1..5
+        return t - t % 1 days + (6 - dow) * 1 days;
     }
 
     /// @dev Starting at `roundId` (updatedAt >= expiry), step back while predecessors are still at/after

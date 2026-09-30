@@ -92,7 +92,10 @@ contract Deploy is Script {
     }
 
     function _deployUnderlying(U memory u, uint256 i, address deployer) internal returns (string memory usOut) {
-        FeedMirror feed = new FeedMirror(u.feedDesc, 8, relayer);
+        // FEED_<SYMBOL> reuses an already-deployed mirror (so a redeployed market keeps the keeper's
+        // existing feed stream); otherwise a fresh FeedMirror is deployed.
+        address existing = vm.envOr(string.concat("FEED_", u.symbol), address(0));
+        FeedMirror feed = existing != address(0) ? FeedMirror(existing) : new FeedMirror(u.feedDesc, 8, relayer);
         // v2 vaults are deployed next to the market (keeps the market under the 24 KiB limit) and bound
         // to it by constructor: the market checks market / underlyingId / asset in addUnderlying.
         ProtectionVault vault = new ProtectionVault(

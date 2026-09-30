@@ -29,6 +29,12 @@ export const aggregatorAbi = [
   { type: "function", name: "description", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
 ] as const;
 
+const feedMirrorErrors = [
+  { type: "error", name: "NotRelayer", inputs: [] },
+  { type: "error", name: "BadRound", inputs: [] },
+  { type: "error", name: "NoData", inputs: [] },
+] as const;
+
 export const feedMirrorAbi = [
   ...aggregatorAbi,
   { type: "function", name: "latestRound", stateMutability: "view", inputs: [], outputs: [{ type: "uint80" }] },
@@ -62,9 +68,7 @@ export const feedMirrorAbi = [
     ],
     outputs: [],
   },
-  { type: "error", name: "NotRelayer", inputs: [] },
-  { type: "error", name: "BadRound", inputs: [] },
-  { type: "error", name: "NoData", inputs: [] },
+  ...feedMirrorErrors,
 ] as const;
 
 /// Robinhood Stock Token (mainnet). The keeper only needs the corporate-action pause flag.
@@ -72,7 +76,114 @@ export const stockTokenAbi = [
   { type: "function", name: "oraclePaused", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
 ] as const;
 
-/// The subset of AfterHoursMarket the keeper uses. Errors are listed so reverts decode by name.
+/// Every custom error AfterHoursMarket declares, in contract order (abi.test.ts checks them against
+/// the generated ABI).
+const marketErrors = [
+  { type: "error", name: "UnknownUnderlying", inputs: [] },
+  { type: "error", name: "UnderlyingDisabled", inputs: [] },
+  { type: "error", name: "UnknownSeries", inputs: [] },
+  { type: "error", name: "MarketClosed", inputs: [] },
+  { type: "error", name: "BadExpiry", inputs: [] },
+  { type: "error", name: "BadStrike", inputs: [] },
+  { type: "error", name: "ZeroUnits", inputs: [] },
+  { type: "error", name: "StalePrice", inputs: [{ name: "updatedAt", type: "uint256" }] },
+  { type: "error", name: "FeedPaused", inputs: [] },
+  { type: "error", name: "InvalidAnswer", inputs: [] },
+  {
+    type: "error",
+    name: "PricerSpotMismatch",
+    inputs: [
+      { name: "pricerSpot", type: "uint256" },
+      { name: "feedSpot", type: "uint256" },
+    ],
+  },
+  {
+    type: "error",
+    name: "PremiumTooHigh",
+    inputs: [
+      { name: "premium", type: "uint256" },
+      { name: "maxPremium", type: "uint256" },
+    ],
+  },
+  { type: "error", name: "TooManyActiveSeries", inputs: [] },
+  { type: "error", name: "NotExpired", inputs: [] },
+  { type: "error", name: "AlreadySettled", inputs: [] },
+  { type: "error", name: "NotSettled", inputs: [] },
+  {
+    type: "error",
+    name: "AwaitingPostExpiryPrint",
+    inputs: [
+      { name: "expiry", type: "uint64" },
+      { name: "lastUpdate", type: "uint256" },
+    ],
+  },
+  { type: "error", name: "SettleWalkTooLong", inputs: [] },
+  { type: "error", name: "BadRoundHint", inputs: [] },
+  { type: "error", name: "BadConfig", inputs: [] },
+  { type: "error", name: "BadParams", inputs: [] },
+  { type: "error", name: "BadFeed", inputs: [] },
+  { type: "error", name: "BadVault", inputs: [] },
+  { type: "error", name: "NotScheduled", inputs: [{ name: "id", type: "bytes32" }] },
+  {
+    type: "error",
+    name: "Timelocked",
+    inputs: [
+      { name: "id", type: "bytes32" },
+      { name: "eta", type: "uint64" },
+    ],
+  },
+  {
+    type: "error",
+    name: "ScheduleExpired",
+    inputs: [
+      { name: "id", type: "bytes32" },
+      { name: "eta", type: "uint64" },
+    ],
+  },
+  {
+    type: "error",
+    name: "SeriesTooSmall",
+    inputs: [
+      { name: "premium", type: "uint256" },
+      { name: "minimum", type: "uint256" },
+    ],
+  },
+] as const;
+
+/// ProtectionVault errors bubble up through the market's settle path (vault.settle), as do the
+/// OpenZeppelin ones below (pause, reentrancy guard, the vault's asset transfer).
+const vaultErrors = [
+  { type: "error", name: "OnlyMarket", inputs: [] },
+  {
+    type: "error",
+    name: "InsufficientFreeLiquidity",
+    inputs: [
+      { name: "requested", type: "uint256" },
+      { name: "available", type: "uint256" },
+    ],
+  },
+  { type: "error", name: "UtilizationTooHigh", inputs: [] },
+  { type: "error", name: "BadSettle", inputs: [] },
+] as const;
+
+const openZeppelinErrors = [
+  { type: "error", name: "EnforcedPause", inputs: [] },
+  { type: "error", name: "ReentrancyGuardReentrantCall", inputs: [] },
+  { type: "error", name: "SafeERC20FailedOperation", inputs: [{ name: "token", type: "address" }] },
+  {
+    type: "error",
+    name: "ERC20InsufficientBalance",
+    inputs: [
+      { name: "sender", type: "address" },
+      { name: "balance", type: "uint256" },
+      { name: "needed", type: "uint256" },
+    ],
+  },
+] as const;
+
+/// The subset of AfterHoursMarket the keeper calls, plus every error a settlement can revert with
+/// (the market's own, the vault's, OpenZeppelin's and an empty FeedMirror's NoData), so reverts
+/// decode by name.
 export const marketAbi = [
   {
     type: "event",
@@ -109,6 +220,8 @@ export const marketAbi = [
           { name: "premium", type: "uint256" },
           { name: "settlePrice", type: "uint256" },
           { name: "owed", type: "uint256" },
+          { name: "timeValue", type: "uint256" },
+          { name: "accrualRate", type: "uint256" },
         ],
       },
     ],
@@ -124,18 +237,8 @@ export const marketAbi = [
     ],
     outputs: [],
   },
-  { type: "error", name: "SettleWalkTooLong", inputs: [] },
-  {
-    type: "error",
-    name: "AwaitingPostExpiryPrint",
-    inputs: [
-      { name: "expiry", type: "uint64" },
-      { name: "lastUpdate", type: "uint256" },
-    ],
-  },
-  { type: "error", name: "FeedPaused", inputs: [] },
-  { type: "error", name: "NotExpired", inputs: [] },
-  { type: "error", name: "AlreadySettled", inputs: [] },
-  { type: "error", name: "NotSettled", inputs: [] },
-  { type: "error", name: "InvalidAnswer", inputs: [] },
+  ...marketErrors,
+  ...vaultErrors,
+  ...openZeppelinErrors,
+  ...feedMirrorErrors,
 ] as const;

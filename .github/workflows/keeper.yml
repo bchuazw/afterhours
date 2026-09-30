@@ -26,6 +26,8 @@ jobs:
       CHAIN_ID: ${{ matrix.chain }}
       RELAYER_KEY: ${{ secrets.RELAYER_KEY }}
       BACKFILL_ROUNDS: "150"
+      # v2 market (submitted address) keeps being settled after the v2.1 redeploy.
+      LEGACY_MARKETS: "0x605dF7bFc5E17fF57A8F9a586Bc5032B797D4fd7"
     steps:
       - uses: actions/checkout@v4
       - id: dep

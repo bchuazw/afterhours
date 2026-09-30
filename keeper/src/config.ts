@@ -68,6 +68,13 @@ export function loadDeployment(chainId = TARGET_CHAIN_ID): Deployment {
   return JSON.parse(readFileSync(p, "utf8")) as Deployment;
 }
 
+/// Earlier market deployments on the target chain that may still have open series; the settlement
+/// bot keeps settling them alongside the current deployment. Comma-separated addresses.
+export const LEGACY_MARKETS: Address[] = (process.env.LEGACY_MARKETS ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter((s): s is Address => /^0x[0-9a-fA-F]{40}$/.test(s));
+
 export function relayerKey(): `0x${string}` {
   const raw = (process.env.RELAYER_KEY ?? process.env.PRIVATE_KEY ?? "").trim();
   if (!raw) throw new Error("RELAYER_KEY (or PRIVATE_KEY) not set");

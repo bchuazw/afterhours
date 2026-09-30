@@ -12,18 +12,21 @@ import {IMarketVaultState} from "./interfaces/IMarketVaultState.sol";
 ///         deposit the quote asset (USDG on Robinhood Chain); the market locks collateral for every
 ///         protection sold, so every position is fully collateralized at all times.
 ///
-///         Accounting (v2):
-///           capital     = balance - unearnedPremium
-///           totalAssets = capital - liability
-///         - Premium is *unearned* while its series is open and only becomes writer equity when the series
-///           settles, so a just-in-time deposit around a buy earns nothing.
-///         - `liability` is the market's mark-to-market of the open puts (see IMarketVaultState), so a loss
-///           hits every writer's share price at once instead of whoever exits last.
+///         Accounting (v3):
+///           capital     = balance - unearnedPremium          (backs collateral; premium is never collateral)
+///           totalAssets = balance - liability                (writer equity)
+///         - `liability` (see IMarketVaultState) is, per open series, the premium's not-yet-earned time value
+///           plus the mark-to-market intrinsic value of the puts. A sale adds its net premium to both the
+///           balance and the liability, so the share price never moves on a buy and a just-in-time deposit
+///           around a buy earns nothing. The time value is then released to writers linearly until expiry,
+///           so a deposit or exit just before expiry neither captures nor forfeits premium for a risk
+///           period it did not carry, and a loss hits every writer's share price at once instead of
+///           whoever exits last.
 ///         - At settlement the market moves the owed payout out of the vault into its own escrow, so an
 ///           out-of-the-money series frees all of its collateral without anyone having to claim.
 ///         - Entries and exits pause (max* = 0) while the feed is dark with open exposure or while an
 ///           expired series awaits settlement, and exits can never push utilization above 90%.
-/// @dev Invariant: asset.balanceOf(vault) >= lockedCollateral + unearnedPremium.
+/// @dev Invariant: asset.balanceOf(vault) >= lockedCollateral + unearnedPremium >= liability.
 contract ProtectionVault is ERC4626 {
     using SafeERC20 for IERC20;
 
@@ -34,7 +37,8 @@ contract ProtectionVault is ERC4626 {
     uint32 public immutable underlyingId;
     /// @notice Collateral reserved for open series (asset units). Always fully backed by the balance.
     uint256 public lockedCollateral;
-    /// @notice Net premium received for series that have not settled yet (asset units). Not writer equity.
+    /// @notice Net premium received for series that have not settled yet (asset units). Excluded from the
+    ///         capital that backs collateral; the part already earned by writers is in totalAssets.
     uint256 public unearnedPremium;
 
     event CollateralLocked(uint256 collateral, uint256 premium, uint256 totalLocked, uint256 totalUnearned);
@@ -64,7 +68,7 @@ contract ProtectionVault is ERC4626 {
     // Views
     // ---------------------------------------------------------------------------------------------
 
-    /// @notice Balance that backs writers' positions: everything except not-yet-earned premium.
+    /// @notice Balance that backs collateral: everything except premium of unsettled series.
     function capital() public view returns (uint256) {
         uint256 bal = IERC20(asset()).balanceOf(address(this));
         return bal > unearnedPremium ? bal - unearnedPremium : 0;
@@ -95,16 +99,16 @@ contract ProtectionVault is ERC4626 {
         (open,) = IMarketVaultState(market).vaultState(underlyingId);
     }
 
-    /// @notice Mark-to-market liability of open puts beyond their own unearned premium, asset units.
+    /// @notice Unearned time value plus mark-to-market intrinsic value of the open puts, asset units.
     function liability() public view returns (uint256 liab) {
         (, liab) = IMarketVaultState(market).vaultState(underlyingId);
     }
 
-    /// @notice Writer equity: balance - unearned premium - mark-to-market liability.
+    /// @notice Writer equity: balance - liability. Never below capital() - lockedCollateral.
     function totalAssets() public view override returns (uint256) {
-        uint256 c = capital();
+        uint256 bal = IERC20(asset()).balanceOf(address(this));
         uint256 liab = liability();
-        return c > liab ? c - liab : 0;
+        return bal > liab ? bal - liab : 0;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -112,7 +116,7 @@ contract ProtectionVault is ERC4626 {
     // ---------------------------------------------------------------------------------------------
 
     /// @notice Reserve `collateral` for a sale and book `premiumNet` (sent by the market right after this
-    ///         call) as unearned premium.
+    ///         call) as premium of an unsettled series.
     function lock(uint256 collateral, uint256 premiumNet) external onlyMarket {
         uint256 c = capital();
         uint256 locked = lockedCollateral;
@@ -126,8 +130,8 @@ contract ProtectionVault is ERC4626 {
         emit CollateralLocked(collateral, premiumNet, locked, unearned);
     }
 
-    /// @notice A series settled: unlock all of its collateral, earn its premium and hand the owed payout to
-    ///         the market, which escrows it for position holders.
+    /// @notice A series settled: unlock all of its collateral, release its premium into capital and hand the
+    ///         owed payout to the market, which escrows it for position holders.
     function settle(uint256 lockedAmt, uint256 owed, uint256 premiumNet) external onlyMarket {
         uint256 locked = lockedCollateral;
         uint256 unearned = unearnedPremium;

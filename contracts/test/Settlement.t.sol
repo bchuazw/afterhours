@@ -181,18 +181,111 @@ contract SettlementTest is BaseTest {
 
     function test_settle_skipsInvalidFirstPrint() public {
         uint64 expiry = _week();
-        (uint256 id,) = _buy(340 * P8, expiry, UNIT);
+        (uint256 a,) = _buy(340 * P8, expiry, UNIT);
+        (uint256 b,) = _buy(341 * P8, expiry, UNIT);
         uint80 bad = ++lastRound;
         _pushRaw(bad, GENESIS_ANSWER, expiry + 1);
         uint80 good = _push(310 * P8, expiry + 2);
+        uint80 later = _push(320 * P8, expiry + 3);
         vm.warp(expiry + 3);
         vm.expectRevert(AfterHoursMarket.BadRoundHint.selector);
-        market.settleAt(id, bad); // invalid answer can never be used
+        market.settleAt(a, bad); // invalid answer can never be used
         vm.expectRevert(AfterHoursMarket.BadRoundHint.selector);
-        market.settleAt(id, good); // not the first post-expiry round
+        market.settleAt(a, later); // a valid post-expiry round precedes it
         vm.expectEmit(true, false, false, true, address(market));
-        emit AfterHoursMarket.SeriesSettled(id, 310 * P8, good, false, 30e6, 310e6);
+        emit AfterHoursMarket.SeriesSettled(a, 310 * P8, good, false, 30e6, 310e6);
+        market.settle(a);
+        // settleAt accepts the same round settle() picks: the walk steps over the invalid print.
+        vm.expectEmit(true, false, false, true, address(market));
+        emit AfterHoursMarket.SeriesSettled(b, 310 * P8, good, false, 31e6, 310e6);
+        market.settleAt(b, good);
+    }
+
+    /// @dev Regression: with an invalid first post-expiry round and a walk longer than MAX_SETTLE_WALK,
+    ///      settle() reverted and settleAt rejected every hint, so the series (and the vault) froze forever.
+    function test_settleAt_walksOverInvalidPostExpiryRounds() public {
+        uint64 expiry = _week();
+        (uint256 id,) = _buy(340 * P8, expiry, UNIT);
+        uint80 pre = _push(350 * P8, expiry - 1 hours);
+        uint80 bad = ++lastRound;
+        _pushRaw(bad, GENESIS_ANSWER, expiry + 1); // first post-expiry round: 16-decimal answer
+        uint80 bad2 = ++lastRound;
+        _pushRaw(bad2, 1e14, expiry + 2); // second: $1,000,000, also invalid
+        uint80 first = _push(300 * P8, expiry + 3); // first *valid* post-expiry round
+        for (uint256 i; i < 301; ++i) {
+            _push(350 * P8, expiry + 4 + i); // 301 more valid rounds: settle()'s walk is too long
+        }
+        vm.warp(expiry + 1 hours);
+
+        vm.expectRevert(AfterHoursMarket.SettleWalkTooLong.selector);
         market.settle(id);
+        vm.expectRevert(AfterHoursMarket.BadRoundHint.selector);
+        market.settleAt(id, pre);
+        vm.expectRevert(AfterHoursMarket.BadRoundHint.selector);
+        market.settleAt(id, bad);
+        vm.expectRevert(AfterHoursMarket.BadRoundHint.selector);
+        market.settleAt(id, bad2);
+        vm.expectRevert(AfterHoursMarket.BadRoundHint.selector);
+        market.settleAt(id, first + 1); // `first` is valid and earlier
+        vm.expectEmit(true, false, false, true, address(market));
+        emit AfterHoursMarket.SeriesSettled(id, 300 * P8, first, false, 40e6, 300e6);
+        market.settleAt(id, first);
+        assertTrue(vault.isOpen());
+    }
+
+    /// @dev Regression: across a phase change settleAt accepted both the old phase's first post-expiry
+    ///      round and the new phase's index 1, so the caller picked the price. Hints must now be in the
+    ///      latest phase, which is the phase settle() walks.
+    function test_settleAt_rejectsHintsOutsideLatestPhase() public {
+        uint64 expiry = _week();
+        (uint256 a,) = _buy(340 * P8, expiry, UNIT);
+        (uint256 b,) = _buy(341 * P8, expiry, UNIT);
+        _push(345 * P8, expiry - 1 hours);
+        uint80 oldFirst = _push(300 * P8, expiry + 5); // old aggregator keeps printing past expiry
+        uint80 p2first = uint80((uint256(2) << 64) | 1);
+        _pushRaw(p2first, int256(350 * P8), expiry + 10);
+        vm.warp(expiry + 1 hours);
+
+        vm.expectRevert(AfterHoursMarket.BadRoundHint.selector);
+        market.settleAt(a, oldFirst);
+        market.settleAt(a, p2first);
+        market.settle(b);
+        assertEq(market.getSeries(a).settlePrice, 350 * P8);
+        assertEq(market.getSeries(b).settlePrice, 350 * P8);
+
+        // Variant: the old aggregator prints again days later; still not a valid hint.
+        (uint256 c,) = _buy(342 * P8, _week(), UNIT);
+        uint64 expiryC = market.getSeries(c).expiry;
+        uint80 oldLate = _push(200 * P8, expiryC + 3 days);
+        _pushRaw(uint80((uint256(2) << 64) | 2), int256(360 * P8), expiryC + 5);
+        vm.warp(expiryC + 4 days);
+        vm.expectRevert(AfterHoursMarket.BadRoundHint.selector);
+        market.settleAt(c, oldLate);
+        market.settle(c);
+        assertEq(market.getSeries(c).settlePrice, 360 * P8);
+    }
+
+    /// @dev Regression: an expiry in the Friday-evening slice (accepted before) was priced as weekday risk
+    ///      but settled on the Monday reopen print, paying the weekend gap. Such expiries are refused; an
+    ///      expiry at Friday 19:30 UTC is followed by live prints and settles on them.
+    function test_fridayExpiry_neverSettlesOnMondayReopen() public {
+        vm.warp(FRI20 - 2 hours); // Friday 18:00 UTC
+        _push(spot, block.timestamp - 60);
+        vm.prank(buyer);
+        vm.expectRevert(AfterHoursMarket.BadExpiry.selector);
+        market.buyProtection(tsla, 360 * P8, uint64(FRI20), 100 * UNIT, type(uint256).max);
+        vm.prank(buyer);
+        vm.expectRevert(AfterHoursMarket.BadExpiry.selector);
+        market.buyProtection(tsla, 360 * P8, uint64(SAT0 - 30 minutes), 100 * UNIT, type(uint256).max);
+
+        uint64 expiry = uint64(FRI20 - 30 minutes); // Friday 19:30 UTC
+        (uint256 id,) = _buy(360 * P8, expiry, 100 * UNIT);
+        _push(355 * P8, expiry + 3 minutes); // regular session still open: prints follow
+        _push(300 * P8, NEXT_MON0 + 40); // Monday reopen after a weekend gap
+        vm.warp(NEXT_MON0 + 60);
+        market.settle(id);
+        assertEq(market.getSeries(id).settlePrice, 355 * P8);
+        assertEq(market.getSeries(id).owed, 500e6);
     }
 
     function test_settle_onlyInvalidPostExpiryPrintReverts() public {
@@ -431,10 +524,13 @@ contract SettlementTest is BaseTest {
 
         (uint256 id,) = _buy(340 * P8, _week(), 100 * UNIT);
         uint64 expiry = market.getSeries(id).expiry;
-        // Spot falls mid-week: the open put is marked at intrinsic (4,000) net of its premium (720).
+        // Spot falls after an hour: the open put is marked at intrinsic (4,000) plus its still-unearned
+        // premium (720 less one hour of accrual).
         _push(300 * P8, block.timestamp + 1 hours);
         vm.warp(block.timestamp + 1 hours);
-        assertEq(vault.liability(), 3_280e6);
+        uint256 unearned = market.unearnedOf(id);
+        assertApproxEqAbs(unearned, uint256(720e6) * (7 days - 1 hours) / 7 days, 1);
+        assertEq(vault.liability(), 4_000e6 + unearned);
         uint256 s1 = vault.balanceOf(writer);
         vm.prank(writer);
         uint256 out1 = vault.redeem(s1, writer, writer); // exits before anyone settles
@@ -445,8 +541,11 @@ contract SettlementTest is BaseTest {
         uint256 s2 = vault.balanceOf(writer2);
         vm.prank(writer2);
         uint256 out2 = vault.redeem(s2, writer2, writer2);
-        assertApproxEqAbs(out1, out2, 2);
-        assertApproxEqAbs(out1, 100_000e6 - 1_640e6, 2);
+        // Both carry half the 4,000 loss; the exiting writer takes only the hour of premium it earned and
+        // the writer who stays through expiry earns the rest.
+        assertApproxEqAbs(out1, 100_000e6 - 2_000e6 + (720e6 - unearned) / 2, 2);
+        assertApproxEqAbs(out2 - out1, unearned, 2);
+        assertApproxEqAbs(out1 + out2, 200_000e6 - 4_000e6 + 720e6, 2);
     }
 
     function test_claims_proRataSumExactlyToOwed() public {
@@ -477,6 +576,7 @@ contract SettlementTest is BaseTest {
     }
 
     function testFuzz_claims_sumToOwed(uint256 units, uint256 a, uint256 b, uint256 price, bool reverseOrder) public {
+        _noMinSeries();
         units = bound(units, 3, 100 * UNIT);
         a = bound(a, 1, units - 2);
         b = bound(b, 1, units - a - 1);
@@ -601,6 +701,7 @@ contract SettlementTest is BaseTest {
     }
 
     function testFuzz_payoutNeverExceedsCollateral(uint256 strikeDollars, uint256 settle, uint256 units) public {
+        _noMinSeries();
         strikeDollars = bound(strikeDollars, 180, 432);
         units = bound(units, 1, 100 * UNIT);
         settle = bound(settle, 1, 1e14 - 1);

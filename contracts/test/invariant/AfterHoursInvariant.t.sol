@@ -104,10 +104,13 @@ contract Handler is Test {
         uint256 hi = s * market.maxStrikeBps() / (10_000 * P8);
         if (hi < lo) return;
         uint256 strike = bound(strikeSeed, lo, hi) * P8;
+        // Expiries sit on the 30-minute grid and outside the dark window (Fri 20:00 -> Mon 01:00 UTC).
         uint256 expiry = now_ + bound(tenorSeed, 1 hours, 20 days);
-        while (market.isClosedAt(expiry)) expiry += 1 hours;
+        expiry = (expiry + 30 minutes - 1) / 30 minutes * 30 minutes;
+        while (market.isDarkAt(expiry)) expiry += 30 minutes;
         if (expiry > now_ + market.maxTenor()) return;
-        uint256 units = bound(unitsSeed, 1e12, 40 * UNIT);
+        // Mostly real-sized buys (a new series needs >= $5 of premium), some dust top-ups.
+        uint256 units = unitsSeed % 4 == 3 ? bound(unitsSeed, 1e12, UNIT) : bound(unitsSeed, UNIT, 40 * UNIT);
         address b = buyers[actorSeed % buyers.length];
         vm.prank(b);
         try market.buyProtection(uid, strike, uint64(expiry), units, type(uint256).max) returns (uint256 id, uint256) {
@@ -240,6 +243,23 @@ contract Handler is Test {
         }
     }
 
+    /// @dev Reference liability: per active series, unearned time value + min(locked, intrinsic at spot).
+    function referenceLiability() external view returns (uint256 total) {
+        (, int256 a,,,) = feed.latestRoundData();
+        uint256 spot = a > 0 && a < 1e14 ? uint256(a) : 0;
+        uint256[] memory active = market.activeSeries(uid);
+        for (uint256 i; i < active.length; ++i) {
+            AfterHoursMarket.Series memory s = market.getSeries(active[i]);
+            uint256 unearned = market.unearnedOf(active[i]);
+            require(s.timeValue <= s.premium && unearned <= s.timeValue, "accrual bounds");
+            total += unearned;
+            if (s.strike > spot) {
+                uint256 mark = (s.strike - spot) * s.openUnits / 1e20;
+                total += mark < s.locked ? mark : s.locked;
+            }
+        }
+    }
+
     function unsettledNotActive() external view returns (uint256 n) {
         uint256[] memory active = market.activeSeries(uid);
         for (uint256 i; i < allSeries.length; ++i) {
@@ -254,10 +274,11 @@ contract Handler is Test {
 }
 
 /// @notice Protocol-wide accounting invariants:
-///           vault balance >= lockedCollateral + unearnedPremium
+///           vault balance >= lockedCollateral + unearnedPremium >= liability
 ///           market balance >= sum of owed over settled series
 ///           lockedCollateral == sum of s.locked over active series
 ///           unearnedPremium == sum of s.premium over active series
+///           liability == sum over active series of unearned time value + marked intrinsic
 /// forge-config: default.invariant.runs = 128
 /// forge-config: default.invariant.depth = 64
 contract AfterHoursInvariantTest is Test {
@@ -275,7 +296,15 @@ contract AfterHoursInvariantTest is Test {
         feed = new FeedMirror("RHTSLA / USD", 8, relayer);
         MockPricer pricer = new MockPricer(150);
         market = new AfterHoursMarket(IERC20(address(usd)), IPricer(address(pricer)), makeAddr("treasury"), "");
-        market.setConfig(makeAddr("treasury"), 500, 1 hours, 30 days, 26 hours, 5 days, 5_000, 12_000);
+        // A protocol fee is a risk-increasing change: scheduled, executed after the timelock, then back.
+        bytes memory cfg = abi.encodeCall(
+            market.setConfig, (makeAddr("treasury"), 500, 1 hours, 30 days, 26 hours, 5 days, 5_000, 12_000)
+        );
+        (, uint64 eta) = market.schedule(cfg);
+        vm.warp(eta);
+        (bool ok,) = address(market).call(cfg);
+        require(ok, "setConfig");
+        vm.warp(start);
         vault = new ProtectionVault(IERC20(address(usd)), "AfterHours TSLA Writer", "ahTSLA", address(market), 1);
         uint32 uid = market.addUnderlying(
             "TSLA",
@@ -356,12 +385,23 @@ contract AfterHoursInvariantTest is Test {
         invariant_lockedEqualsSumOfActiveSeries();
         invariant_unearnedEqualsSumOfActivePremium();
         invariant_activeListMatchesUnsettledSeries();
+        invariant_totalAssetsIsBalanceLessLiability();
+        invariant_liabilityMatchesReference();
         assertEq(vault.lockedCollateral(), 0);
         assertEq(usd.balanceOf(address(market)), 0);
     }
 
-    /// @dev Share accounting never exceeds the assets backing it.
-    function invariant_totalAssetsWithinCapital() public view {
-        assertLe(vault.totalAssets(), vault.capital());
+    /// @dev Share accounting never exceeds the assets backing it and is exactly balance - liability, where
+    ///      the liability is bounded by the collateral and premium of the open series.
+    function invariant_totalAssetsIsBalanceLessLiability() public view {
+        uint256 bal = usd.balanceOf(address(vault));
+        uint256 liab = vault.liability();
+        assertLe(liab, vault.lockedCollateral() + vault.unearnedPremium());
+        assertEq(vault.totalAssets(), bal - liab);
+        assertGe(vault.totalAssets() + vault.lockedCollateral(), vault.capital());
+    }
+
+    function invariant_liabilityMatchesReference() public view {
+        assertEq(vault.liability(), handler.referenceLiability());
     }
 }

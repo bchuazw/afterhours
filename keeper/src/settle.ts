@@ -3,7 +3,9 @@
  *
  *   - `settle(id)` walks the feed back from its latest round to the first print at/after expiry.
  *     When that walk is longer than the market allows (SettleWalkTooLong) the bot finds the round
- *     off-chain and calls `settleAt(id, roundId)`, which the market verifies.
+ *     off-chain (hint.ts) and calls `settleAt(id, roundId)`, which the market verifies against the
+ *     round's predecessors. A mirror hole among them is a certain BadRoundHint, so it is reported
+ *     as a gap that needs a manual backfill instead of being simulated on every pass.
  *   - AwaitingPostExpiryPrint (no print since expiry yet, e.g. over the weekend) and FeedPaused
  *     (corporate action) are expected states: the series is simply retried on the next pass.
  *   - Errors are contained per series and per pass; RPC failures never end the loop.
@@ -13,17 +15,16 @@
  */
 import { createPublicClient, createWalletClient, http, parseAbiItem, type Address, type Hash } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { loadDeployment, relayerKey, robinhoodTestnet, type Deployment } from "./config.js";
+import { LEGACY_MARKETS, loadDeployment, relayerKey, robinhoodTestnet, type Deployment } from "./config.js";
 import { feedMirrorAbi, marketAbi } from "./abi.js";
-import { errMsg, indexOf, isRevert, isValidAnswer, phaseBase, revertName, short, sleep } from "./util.js";
+import { findSettleRound, type FeedReader } from "./hint.js";
+import { errMsg, indexOf, isRevert, isValidAnswer, revertName, short, sleep } from "./util.js";
 
 const once = process.argv.includes("--once");
 const POLL_MS = Number(process.env.POLL_MS ?? 120_000);
 /// eth_getLogs block span; shrinks automatically when the RPC rejects a range, then regrows.
 const LOG_SPAN = BigInt(process.env.LOG_SPAN ?? 50_000);
 const MIN_LOG_SPAN = 500n;
-/// When the round just before a settlement candidate is missing, probe this many ids further down.
-const GAP_PROBE = 64;
 
 const client = createPublicClient({ chain: robinhoodTestnet, transport: http() });
 const account = privateKeyToAccount(relayerKey());
@@ -34,13 +35,27 @@ const boughtEvent = parseAbiItem(
 );
 
 type Open = { id: bigint; underlyingId: number; expiry: bigint };
-type Outcome = "settled" | "awaiting" | "paused" | "gone";
+type Outcome = "settled" | "awaiting" | "paused" | "gap" | "gone";
 
 /// Series seen in ProtectionBought logs and not yet known to be settled, plus the log cursor.
+/// One such state per market: the current deployment and any legacy markets (LEGACY_MARKETS) that
+/// still have open series.
+type MarketState = { nextBlock: bigint; span: bigint; open: Map<bigint, Open> };
+const states = new Map<Address, MarketState>();
 let market: Address | undefined;
 let nextBlock = 0n;
 let span = LOG_SPAN;
-const open = new Map<bigint, Open>();
+let open = new Map<bigint, Open>();
+
+/** Point the module-level cursor/state at `addr` (creating it on first use). */
+function selectMarket(addr: Address, deployBlock: number): void {
+  if (market) states.set(market, { nextBlock, span, open });
+  const s = states.get(addr) ?? { nextBlock: BigInt(deployBlock), span: LOG_SPAN, open: new Map<bigint, Open>() };
+  market = addr;
+  nextBlock = s.nextBlock;
+  span = s.span;
+  open = s.open;
+}
 
 /** Scan ProtectionBought logs incrementally, in block ranges the RPC accepts. */
 async function discover(dep: Deployment): Promise<void> {
@@ -92,69 +107,29 @@ function quietOutcome(e: unknown, id: bigint): Outcome | null {
 }
 
 /**
- * updatedAt of `roundId` on `feed`, or null when the feed has no usable round there (the call
- * reverts, as FeedMirror does, or returns an empty round, as an OCR2 aggregator does). Transport
- * errors are rethrown so a flaky RPC can never pass for a missing round.
+ * Feed access for the hint search. A revert (FeedMirror's NoData) or an empty round means the feed
+ * has no such round; transport errors are rethrown so a flaky RPC can never pass for a missing one.
  */
-async function updatedAtOf(feed: Address, roundId: bigint): Promise<bigint | null> {
-  try {
-    const [rid, answer, , updatedAt] = await client.readContract({
-      address: feed,
-      abi: feedMirrorAbi,
-      functionName: "getRoundData",
-      args: [roundId],
-    });
-    return rid === roundId && updatedAt > 0n && isValidAnswer(answer) ? updatedAt : null;
-  } catch (e) {
-    if (isRevert(e)) return null;
-    throw e;
-  }
-}
-
-/**
- * First round on `feed` with updatedAt >= expiry whose predecessor has updatedAt < expiry: the
- * round `settleAt` expects. Binary search within the latest round's phase, treating missing ids
- * (before the mirrored history, or skipped invalid answers) as pre-expiry, then verifying the
- * predecessor. `exact` is false when the predecessor is missing and the round is the earliest
- * post-expiry round that could be found. Returns null if the feed has not printed since expiry.
- */
-async function findSettleRound(feed: Address, expiry: bigint): Promise<{ roundId: bigint; exact: boolean } | null> {
-  let latestId: bigint;
-  let latestAt: bigint;
-  try {
-    [latestId, , , latestAt] = await client.readContract({ address: feed, abi: feedMirrorAbi, functionName: "latestRoundData" });
-  } catch (e) {
-    if (isRevert(e)) return null; // empty mirror
-    throw e;
-  }
-  if (latestAt < expiry) return null;
-  const lowest = phaseBase(latestId) + 1n;
-  let hi = latestId; // invariant: round `hi` exists and updatedAt(hi) >= expiry
-  for (let attempt = 0; attempt < 8; attempt++) {
-    let lo = lowest - 1n;
-    let loMissing = true;
-    while (hi - lo > 1n) {
-      const mid = lo + (hi - lo) / 2n;
-      const t = await updatedAtOf(feed, mid);
-      if (t !== null && t >= expiry) hi = mid;
-      else {
-        lo = mid;
-        loMissing = t === null;
-      }
+const reader: FeedReader = {
+  async latest(feed) {
+    try {
+      const [roundId, answer, , updatedAt] = await client.readContract({ address: feed, abi: feedMirrorAbi, functionName: "latestRoundData" });
+      return updatedAt > 0n ? { roundId, updatedAt, valid: isValidAnswer(answer) } : null;
+    } catch (e) {
+      if (isRevert(e)) return null; // empty mirror
+      throw e;
     }
-    if (!loMissing) return { roundId: hi, exact: true };
-    // `hi - 1` is missing. If an earlier post-expiry round sits below the hole, search again below it.
-    let below: bigint | null = null;
-    let belowId = lo - 1n;
-    for (let n = 0; n < GAP_PROBE && belowId >= lowest; n++, belowId--) {
-      below = await updatedAtOf(feed, belowId);
-      if (below !== null) break;
+  },
+  async round(feed, roundId) {
+    try {
+      const [rid, answer, , updatedAt] = await client.readContract({ address: feed, abi: feedMirrorAbi, functionName: "getRoundData", args: [roundId] });
+      return rid === roundId && updatedAt > 0n ? { updatedAt, valid: isValidAnswer(answer) } : null;
+    } catch (e) {
+      if (isRevert(e)) return null;
+      throw e;
     }
-    if (below === null || below < expiry) return { roundId: hi, exact: false };
-    hi = belowId;
-  }
-  return { roundId: hi, exact: false };
-}
+  },
+};
 
 function underlyingOf(dep: Deployment, underlyingId: number) {
   return Object.values(dep.underlyings).find((x) => x.id === underlyingId);
@@ -185,8 +160,16 @@ async function settleOne(dep: Deployment, id: bigint, now: bigint): Promise<Outc
 
   // The on-chain walk-back from the latest round is capped; locate the first post-expiry round here.
   if (!u) throw new Error(`SettleWalkTooLong, but ${symbol} is missing from deployments/${dep.chainId}.json`);
-  const hint = await findSettleRound(u.feed, s.expiry);
+  const hint = await findSettleRound(reader, u.feed, s.expiry);
   if (!hint) throw new Error(`SettleWalkTooLong, but the ${symbol} feed has no round at/after expiry ${s.expiry}`);
+  const gap = hint.missing === undefined ? null : `mirror gap at #${indexOf(hint.missing)} below settlement round #${indexOf(hint.roundId)}; manual backfill needed`;
+  // settleAt checks the hint's predecessors down to the last pre-expiry print, so a hole among them
+  // is a certain BadRoundHint until the grace period has passed; after that the market may accept
+  // the hint over the hole, so it is offered once per pass.
+  if (gap && now < s.expiry + s.grace) {
+    console.warn(`series ${short(id)} (${symbol}): ${gap}`);
+    return "gap";
+  }
   try {
     const { request } = await client.simulateContract({
       address: dep.market,
@@ -198,37 +181,44 @@ async function settleOne(dep: Deployment, id: bigint, now: bigint): Promise<Outc
     const hash = await wallet.writeContract(request);
     await confirm(hash);
     open.delete(id);
-    console.log(
-      `settled series ${short(id)} (${symbol}) via settleAt(#${indexOf(hint.roundId)}${hint.exact ? "" : ", predecessor missing"}) (${hash.slice(0, 10)})`,
-    );
+    console.log(`settled series ${short(id)} (${symbol}) via settleAt(#${indexOf(hint.roundId)}${gap ? ", over a mirror gap" : ""}) (${hash.slice(0, 10)})`);
     return "settled";
   } catch (e) {
     const quiet = quietOutcome(e, id);
     if (quiet) return quiet;
+    if (gap && revertName(e) === "BadRoundHint") {
+      console.warn(`series ${short(id)} (${symbol}): ${gap}`);
+      return "gap";
+    }
     throw new Error(`settleAt(#${indexOf(hint.roundId)}) failed: ${errMsg(e)}`);
   }
 }
 
 async function pass(): Promise<void> {
-  const dep = loadDeployment();
-  await discover(dep);
+  const current = loadDeployment();
+  // Legacy markets share the deployment's feeds/vault layout; only the market address differs.
+  const targets = [current, ...LEGACY_MARKETS.filter((m) => m.toLowerCase() !== current.market.toLowerCase()).map((m) => ({ ...current, market: m }))];
   const { timestamp: now } = await client.getBlock();
-  const due = [...open.values()].filter((o) => o.expiry <= now);
-  const tally = { settled: 0, awaiting: 0, paused: 0, failed: 0 };
-  for (const o of due) {
-    try {
-      const outcome = await settleOne(dep, o.id, now);
-      if (outcome !== "gone") tally[outcome]++;
-    } catch (e) {
-      tally.failed++;
-      console.error(`series ${short(o.id)}: ${errMsg(e)}`);
+  for (const dep of targets) {
+    selectMarket(dep.market, dep.deployBlock);
+    await discover(dep);
+    const due = [...open.values()].filter((o) => o.expiry <= now);
+    const tally = { settled: 0, awaiting: 0, paused: 0, gap: 0, failed: 0 };
+    for (const o of due) {
+      try {
+        const outcome = await settleOne(dep, o.id, now);
+        if (outcome !== "gone") tally[outcome]++;
+      } catch (e) {
+        tally.failed++;
+        console.error(`series ${short(o.id)}: ${errMsg(e)}`);
+      }
     }
-  }
-  const pending = tally.settled + tally.awaiting + tally.paused + tally.failed;
-  if (pending > 0) {
-    console.log(
-      `pass: ${pending} expired open series; settled ${tally.settled}, awaiting post-expiry print ${tally.awaiting}, feed paused ${tally.paused}, failed ${tally.failed}`,
-    );
+    const pending = tally.settled + tally.awaiting + tally.paused + tally.gap + tally.failed;
+    if (pending > 0) {
+      console.log(
+        `pass (${dep.market.slice(0, 10)}…): ${pending} expired open series; settled ${tally.settled}, awaiting post-expiry print ${tally.awaiting}, feed paused ${tally.paused}, mirror gap ${tally.gap}, failed ${tally.failed}`,
+      );
+    }
   }
 }
 

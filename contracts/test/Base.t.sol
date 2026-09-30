@@ -13,16 +13,19 @@ import {IAggregatorV3} from "../src/interfaces/IAggregatorV3.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice Shared fixture: one underlying (TSLA) on a FeedMirror, a 100k writer vault, spot $360.
-///         Time starts on a weekday: Monday 2026-09-14 15:33:20 UTC.
+///         Time starts on a weekday, on the expiry grid: Monday 2026-09-14 15:30:00 UTC.
 abstract contract BaseTest is Test {
     uint256 internal constant P8 = 1e8;
     uint256 internal constant UNIT = 1e18;
+    uint256 internal constant GRID = 30 minutes;
     /// @dev Monday 2026-09-14 00:00:00 UTC.
     uint256 internal constant MON0 = 1_789_344_000;
-    /// @dev Monday 2026-09-14 15:33:20 UTC.
-    uint256 internal constant START = MON0 + 56_000;
+    /// @dev Monday 2026-09-14 15:30:00 UTC (so START + whole days stays on the 30-minute expiry grid).
+    uint256 internal constant START = MON0 + 15 hours + 30 minutes;
     /// @dev Saturday 2026-09-19 00:00:00 UTC (closed window opens).
     uint256 internal constant SAT0 = MON0 + 5 days;
+    /// @dev Friday 2026-09-18 20:00:00 UTC (expiry dark window opens).
+    uint256 internal constant FRI20 = SAT0 - 4 hours;
     /// @dev Monday 2026-09-21 00:00:00 UTC.
     uint256 internal constant NEXT_MON0 = MON0 + 7 days;
 
@@ -93,8 +96,21 @@ abstract contract BaseTest is Test {
         (id, premium) = market.buyProtection(tsla, strike, expiry, units, type(uint256).max);
     }
 
+    /// @dev Mirror of AfterHoursMarket.isDarkAt (pure, so helpers never consume a pending prank/expectRevert).
+    function _isDark(uint256 ts) internal pure returns (bool) {
+        uint256 dow = (ts / 1 days + 4) % 7;
+        return dow == 6 || dow == 0 || (dow == 1 && ts % 1 days < 1 hours) || (dow == 5 && ts % 1 days >= 20 hours);
+    }
+
+    /// @dev First allowed expiry at or after `t`: on the 30-minute grid and outside the dark window.
+    function _grid(uint256 t) internal pure returns (uint64) {
+        t = (t + GRID - 1) / GRID * GRID;
+        while (_isDark(t)) t += GRID;
+        return uint64(t);
+    }
+
     function _week() internal view returns (uint64) {
-        return uint64(block.timestamp + 7 days);
+        return _grid(block.timestamp + 7 days);
     }
 
     /// @dev Print `price` one second after expiry, move past it and settle.
@@ -103,6 +119,48 @@ abstract contract BaseTest is Test {
         _push(price, expiry + 1);
         vm.warp(expiry + 2);
         market.settle(id);
+    }
+
+    /// @dev Schedule an admin change, execute it once its timelock has elapsed, then return to the present.
+    function _exec(bytes memory data) internal {
+        (, uint64 eta) = market.schedule(data);
+        uint256 now_ = block.timestamp;
+        vm.warp(eta);
+        (bool ok, bytes memory ret) = address(market).call(data);
+        if (!ok) {
+            assembly {
+                revert(add(ret, 32), mload(ret))
+            }
+        }
+        vm.warp(now_);
+    }
+
+    function _setConfig(
+        address treasury_,
+        uint16 fee,
+        uint64 minTenor,
+        uint64 maxTenor,
+        uint64 maxAge,
+        uint64 grace,
+        uint16 minStrike,
+        uint16 maxStrike
+    ) internal {
+        _exec(
+            abi.encodeCall(market.setConfig, (treasury_, fee, minTenor, maxTenor, maxAge, grace, minStrike, maxStrike))
+        );
+    }
+
+    function _setParams(uint32 id, bool enabled, AfterHoursMarket.PricingParams memory p) internal {
+        _exec(abi.encodeCall(market.setUnderlying, (id, enabled, p)));
+    }
+
+    function _setPricer(IPricer p) internal {
+        _exec(abi.encodeCall(market.setPricer, (p)));
+    }
+
+    /// @dev Drop the series-opening premium minimum (for tests that need dust-sized new series).
+    function _noMinSeries() internal {
+        _exec(abi.encodeCall(market.setMinSeriesPremium, (0)));
     }
 
     function _usd(uint256 price8, uint256 units) internal pure returns (uint256) {
