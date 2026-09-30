@@ -46,6 +46,26 @@ try {
     await sleep(1000);
     const demo = await page.locator("main video, main source, main [src*='.mp4']").evaluateAll((els) => els.map((e) => (e.currentSrc || e.src || "").slice(-50)));
     console.log(JSON.stringify({ loggedIn: ok, editors: eds, images: (text.match(/Images \(\d\/4\)/) || [])[0], demoVideo: demo }, null, 2));
+  } else if (cmd === "append-description") {
+    // Append paragraphs (from a text file) to the end of the Description editor.
+    const { loggedIn: ok } = await loggedIn();
+    if (!ok) throw new Error("not logged in");
+    const paras = readFileSync(arg, "utf8").split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+    const ed = page.locator('[contenteditable="true"]').nth(0);
+    await ed.scrollIntoViewIfNeeded();
+    await ed.click();
+    await page.keyboard.press("Control+End");
+    for (const p of paras) {
+      await page.keyboard.press("Enter");
+      await page.keyboard.insertText(p);
+    }
+    await page.keyboard.type(" ");
+    await page.keyboard.press("Backspace");
+    await sleep(3000);
+    const len = (await ed.innerText()).length;
+    await page.getByRole("button", { name: "Save Edit" }).first().click();
+    await sleep(6000);
+    console.log(JSON.stringify({ descriptionLen: len, url: page.url() }));
   } else if (cmd === "faucet") {
     // HackQuest's Arbitrum Sepolia faucet (0.00151 ETH per day, no captcha) for the deployer.
     await page.goto("https://www.hackquest.io/faucets/421614", { waitUntil: "domcontentloaded" });
