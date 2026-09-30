@@ -69,7 +69,9 @@ export function loadDeployment(chainId = TARGET_CHAIN_ID): Deployment {
 }
 
 export function relayerKey(): `0x${string}` {
-  const k = process.env.RELAYER_KEY ?? process.env.PRIVATE_KEY;
-  if (!k) throw new Error("RELAYER_KEY (or PRIVATE_KEY) not set");
-  return (k.startsWith("0x") ? k : `0x${k}`) as `0x${string}`;
+  const raw = (process.env.RELAYER_KEY ?? process.env.PRIVATE_KEY ?? "").trim();
+  if (!raw) throw new Error("RELAYER_KEY (or PRIVATE_KEY) not set");
+  const k = raw.startsWith("0x") ? raw : `0x${raw}`;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(k)) throw new Error("RELAYER_KEY is not a 32-byte hex key");
+  return k as `0x${string}`;
 }

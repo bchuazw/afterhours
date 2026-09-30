@@ -16,7 +16,7 @@
     },
     {
       "id": "d4",
-      "text": "On the Positions tab, here is the position I just bought, and an earlier one that has now expired. Anyone can settle it, and the contract uses the first feed print at or after expiry, walking back the round history so nobody can pick a more convenient price. Then I claim: the payout, if any, is paid in stablecoins, and the rest of the collateral goes back to the writers."
+      "text": "On the Positions tab, here is the position I just bought, and an earlier one that has now expired. Anyone can settle it. The contract uses the first feed print at or after expiry, walking back the round history so nobody can pick a more convenient price. Settlement moves any payout into escrow and returns the rest of the collateral to the writers straight away. If the put finished in the money, holders claim their pro-rata share; if not, there is nothing left to do."
     },
     {
       "id": "d5",

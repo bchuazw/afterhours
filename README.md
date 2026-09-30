@@ -116,7 +116,18 @@ ffmpeg) used to produce the submission videos.
 
 ## Deployments
 
-See [`contracts/deployments/46630.json`](contracts/deployments/46630.json) (Robinhood Chain testnet).
+Robinhood Chain testnet (chainId 46630), see [`contracts/deployments/46630.json`](contracts/deployments/46630.json):
+
+| Contract | Address |
+|---|---|
+| AfterHoursMarket | [`0x605dF7bFc5E17fF57A8F9a586Bc5032B797D4fd7`](https://explorer.testnet.chain.robinhood.com/address/0x605dF7bFc5E17fF57A8F9a586Bc5032B797D4fd7) |
+| Stylus pricer (Rust) | [`0x0006FC22254403d08D0Cdf1b005CD3906Cfc6fE8`](https://explorer.testnet.chain.robinhood.com/address/0x0006FC22254403d08D0Cdf1b005CD3906Cfc6fE8) |
+| tUSD (test quote asset) | `0x8EF7ba8dC2577cD80a1F0fAC610609AC0a4De727` |
+| TSLA vault / feed mirror | `0xC3a577d552d634c659595022fd28c3de49162a04` / `0x8492cad02fD0bF9358B2988e43039e013D56FfBA` |
+| AMZN vault / feed mirror | `0xBbd84594163fCBbcdA65EA02f24D34705CE44bfD` / `0x75d2a760C86f4F2A7924D7E27B7aAf4244669e45` |
+| NVDA vault / feed mirror | `0x3E9E214Ec55b4a2aac9F1914Be0174860045376d` / `0x6A8617F52C8A3fF40dB4a4cE99FBB20d5c0ABAF8` |
+
+App: https://bchuazw.github.io/afterhours/ (works with an injected wallet or the built-in demo wallet).
 
 ## Security notes
 
