@@ -46,6 +46,57 @@ try {
     await sleep(1000);
     const demo = await page.locator("main video, main source, main [src*='.mp4']").evaluateAll((els) => els.map((e) => (e.currentSrc || e.src || "").slice(-50)));
     console.log(JSON.stringify({ loggedIn: ok, editors: eds, images: (text.match(/Images \(\d\/4\)/) || [])[0], demoVideo: demo }, null, 2));
+  } else if (cmd === "set-description" || cmd === "append-deployment") {
+    // set-description: replace the whole Description with paragraphs from a file.
+    // append-deployment: append text to the confidential "Contract address & deployed link" box.
+    const { loggedIn: ok } = await loggedIn();
+    if (!ok) throw new Error("not logged in");
+    if (cmd === "set-description") {
+      const paras = readFileSync(arg, "utf8").split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+      const ed = page.locator('[contenteditable="true"]').nth(0);
+      await ed.scrollIntoViewIfNeeded();
+      await ed.click();
+      await page.keyboard.press("Control+A");
+      await page.keyboard.press("Delete");
+      for (let i = 0; i < paras.length; i++) {
+        await page.keyboard.insertText(paras[i]);
+        if (i < paras.length - 1) await page.keyboard.press("Enter");
+      }
+      await page.keyboard.type(" ");
+      await page.keyboard.press("Backspace");
+      await sleep(3000);
+      console.log(JSON.stringify({ descriptionLen: (await ed.innerText()).length }));
+    } else {
+      const main = page.locator("main");
+      await main.getByRole("heading", { name: "Deployment Details" }).scrollIntoViewIfNeeded();
+      const box = main.locator("textarea, input[type='text']").last();
+      const cur = await box.inputValue();
+      await box.fill(cur + " " + readFileSync(arg, "utf8").trim());
+      console.log(JSON.stringify({ deploymentLen: (await box.inputValue()).length }));
+    }
+    await page.getByRole("button", { name: "Save Edit" }).first().click();
+    await sleep(6000);
+    console.log(JSON.stringify({ url: page.url() }));
+  } else if (cmd === "prepend-description") {
+    // Insert paragraphs (from a text file) at the top of the Description editor.
+    const { loggedIn: ok } = await loggedIn();
+    if (!ok) throw new Error("not logged in");
+    const paras = readFileSync(arg, "utf8").split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+    const ed = page.locator('[contenteditable="true"]').nth(0);
+    await ed.scrollIntoViewIfNeeded();
+    await ed.click();
+    await page.keyboard.press("Control+Home");
+    for (const p of paras) {
+      await page.keyboard.insertText(p);
+      await page.keyboard.press("Enter");
+    }
+    await page.keyboard.type(" ");
+    await page.keyboard.press("Backspace");
+    await sleep(3000);
+    const len = (await ed.innerText()).length;
+    await page.getByRole("button", { name: "Save Edit" }).first().click();
+    await sleep(6000);
+    console.log(JSON.stringify({ descriptionLen: len, url: page.url() }));
   } else if (cmd === "append-description") {
     // Append paragraphs (from a text file) to the end of the Description editor.
     const { loggedIn: ok } = await loggedIn();
