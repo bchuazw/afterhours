@@ -7,6 +7,16 @@ Built on Robinhood Chain (Arbitrum) for the Arbitrum Open House Singapore Builda
 > Every Friday night, holders of tokenized TSLA, NVDA or AMZN start carrying gap risk that nothing on the chain can hedge.
 > AfterHours is the missing primitive: fully collateralized, cash-settled downside protection, quoted by a Rust/Stylus pricing engine straight from the feed's own history, and settled on the first print after the market reopens.
 
+## Try it in 60 seconds
+
+1. Open https://bchuazw.github.io/afterhours/ and click **Connect → Demo wallet** (a throwaway key in your browser; no extension needed).
+2. Copy the demo wallet's address and get a little Robinhood Chain testnet ETH for gas from https://faucet.testnet.chain.robinhood.com.
+3. In the wallet panel click **Get 10,000 tUSD** (open-mint test stablecoin).
+4. **Protect**: pick TSLA, 90% strike, "Monday open", 10 tokens → the quote is computed onchain by the Stylus pricer from the mirrored mainnet feed history → **Approve & buy protection**.
+5. **Earn**: deposit tUSD into a writer vault; **Positions**: settle expired series and claim.
+
+Sales pause while the feeds are dark (Saturday 00:00 – Monday 01:00 UTC), by design.
+
 ## The problem
 
 Robinhood Chain brings US equities onchain as ERC-20 Stock Tokens. Uniswap pools for them never close. But the Chainlink tokenized-equity feeds that value them are **24/5**: they publish through the overnight session and go quiet from Friday 20:00 ET to Sunday 20:00 ET.

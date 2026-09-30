@@ -28,7 +28,7 @@
     },
     {
       "id": "s7",
-      "text": "Why here, why now? Stock Tokens, Chainlink equity feeds, and Stylus only exist together on Robinhood Chain, and Robinhood's own docs ask for price-reactive logic and yield strategies. AfterHours is live on the Robinhood Chain testnet, mirroring the real mainnet Chainlink rounds, so the demo runs on live market data with the real weekend freeze. Twenty-four Foundry tests, including a fuzz that payout can never exceed locked collateral."
+      "text": "Why here, why now? Stock Tokens, Chainlink equity feeds, and Stylus only exist together on Robinhood Chain, and Robinhood's own docs ask for price-reactive logic and yield strategies. AfterHours is live on the Robinhood Chain testnet, mirroring the real mainnet Chainlink rounds, so the demo runs on live market data with the real weekend freeze. Ninety-seven Foundry tests, including invariants that the vault always covers locked collateral, plus twenty-eight pricer tests, and a ninety-agent adversarial audit whose confirmed findings are all fixed in version two."
     },
     {
       "id": "s8",

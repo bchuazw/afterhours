@@ -46,10 +46,19 @@ try {
     await sleep(1000);
     const demo = await page.locator("main video, main source, main [src*='.mp4']").evaluateAll((els) => els.map((e) => (e.currentSrc || e.src || "").slice(-50)));
     console.log(JSON.stringify({ loggedIn: ok, editors: eds, images: (text.match(/Images \(\d\/4\)/) || [])[0], demoVideo: demo }, null, 2));
-  } else if (cmd === "upload-demo") {
+  } else if (cmd === "faucet") {
+    // HackQuest's Arbitrum Sepolia faucet (0.00151 ETH per day, no captcha) for the deployer.
+    await page.goto("https://www.hackquest.io/faucets/421614", { waitUntil: "domcontentloaded" });
+    await sleep(4000);
+    await page.locator('main input[placeholder="Address"]').fill("0xB71f188a5D29e0A6163fD52F445AAbc431E45969");
+    await page.getByRole("button", { name: /Request .* ETH/ }).click();
+    await sleep(8000);
+    const t = await page.locator("main").innerText();
+    console.log(JSON.stringify({ dripped: /dripped successfully/i.test(t), text: t.replace(/\n+/g, " | ").slice(0, 300) }));
+  } else if (cmd === "upload-demo" || cmd === "upload-pitch") {
     const { loggedIn: ok } = await loggedIn();
     if (!ok) throw new Error("not logged in");
-    await page.getByRole("button", { name: "Demo Video" }).click();
+    await page.getByRole("button", { name: cmd === "upload-pitch" ? "Pitch Video" : "Demo Video" }).click();
     await sleep(800);
     // With all 4 images uploaded the images input disappears, so pick the video input by its accept attribute.
     await page.locator('input[type=file][accept*="video"]').first().setInputFiles(arg);
