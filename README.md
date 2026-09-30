@@ -130,12 +130,12 @@ Robinhood Chain testnet (chainId 46630), see [`contracts/deployments/46630.json`
 
 | Contract | Address |
 |---|---|
-| AfterHoursMarket | [`0x605dF7bFc5E17fF57A8F9a586Bc5032B797D4fd7`](https://explorer.testnet.chain.robinhood.com/address/0x605dF7bFc5E17fF57A8F9a586Bc5032B797D4fd7) |
-| Stylus pricer (Rust) | [`0x0006FC22254403d08D0Cdf1b005CD3906Cfc6fE8`](https://explorer.testnet.chain.robinhood.com/address/0x0006FC22254403d08D0Cdf1b005CD3906Cfc6fE8) |
-| tUSD (test quote asset) | `0x8EF7ba8dC2577cD80a1F0fAC610609AC0a4De727` |
-| TSLA vault / feed mirror | `0xC3a577d552d634c659595022fd28c3de49162a04` / `0x8492cad02fD0bF9358B2988e43039e013D56FfBA` |
-| AMZN vault / feed mirror | `0xBbd84594163fCBbcdA65EA02f24D34705CE44bfD` / `0x75d2a760C86f4F2A7924D7E27B7aAf4244669e45` |
-| NVDA vault / feed mirror | `0x3E9E214Ec55b4a2aac9F1914Be0174860045376d` / `0x6A8617F52C8A3fF40dB4a4cE99FBB20d5c0ABAF8` |
+| AfterHoursMarket **v2.1** (current) | [`0x91107801a88baCeC879554e4F0529BF015fA5A03`](https://explorer.testnet.chain.robinhood.com/address/0x91107801a88baCeC879554e4F0529BF015fA5A03) |
+| AfterHoursMarket v2 (submitted address, still live) | [`0x605dF7bFc5E17fF57A8F9a586Bc5032B797D4fd7`](https://explorer.testnet.chain.robinhood.com/address/0x605dF7bFc5E17fF57A8F9a586Bc5032B797D4fd7) |
+| Stylus pricer (Rust), shared | [`0x0006FC22254403d08D0Cdf1b005CD3906Cfc6fE8`](https://explorer.testnet.chain.robinhood.com/address/0x0006FC22254403d08D0Cdf1b005CD3906Cfc6fE8) |
+| Feed mirrors TSLA / AMZN / NVDA, shared | `0x8492cad02fD0bF9358B2988e43039e013D56FfBA` / `0x75d2a760C86f4F2A7924D7E27B7aAf4244669e45` / `0x6A8617F52C8A3fF40dB4a4cE99FBB20d5c0ABAF8` |
+| v2.1 vaults TSLA / AMZN / NVDA | `0x090EC38Ff24292FFfCB6c2eC1A603A53D39139CD` / `0x5B38A7B1A156D20f364579F4E1Bc69F4A6aED5dD` / `0x82ca92cDcC16Db5872e804c62b725E295DD7683f` |
+| v2.1 tUSD (test quote asset) | `0xf2bb22699B8Ce0F57305738cf47cC7b988929ff8` |
 
 App: https://bchuazw.github.io/afterhours/ (works with an injected wallet or the built-in demo wallet).
 
