@@ -3,7 +3,7 @@
 // Each scene is recorded in its own browser context (webm), then muxed with its narration and concatenated.
 import { chromium } from "playwright";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -183,9 +183,16 @@ const scenes = {
 // ---- main ---------------------------------------------------------------------------------------
 
 const only = process.argv[2];
-const browser = await chromium.launch({ executablePath, headless: true });
+const concatOnly = only === "concat";
+const browser = concatOnly ? null : await chromium.launch({ executablePath, headless: true });
 const segments = [];
 for (const s of deck.scenes) {
+  if (concatOnly) {
+    const seg = join(OUT, `demo-${s.id}.mp4`);
+    if (!existsSync(seg)) throw new Error(`missing ${seg}`);
+    segments.push(seg);
+    continue;
+  }
   if (only && s.id !== only) continue;
   const { ctx, page } = await newScene(browser);
   const errors = [];
@@ -202,7 +209,7 @@ for (const s of deck.scenes) {
   renameSync(webm, named);
 
   const mp3 = join(OUT, `demo-${s.id}.mp3`);
-  if (!existsSync(mp3) || process.env.FORCE_TTS) {
+  if (!existsSync(mp3) || statSync(mp3).size === 0 || process.env.FORCE_TTS) {
     run("python", ["-m", "edge_tts", "--voice", deck.voice, "--rate", deck.rate ?? "+0%", "--text", s.text, "--write-media", mp3]);
   }
   const vd = duration(named), ad = duration(mp3);
@@ -225,9 +232,9 @@ for (const s of deck.scenes) {
     console.log(`  page error: ${e.split("\n")[0].slice(0, 160)}\n${diff}`);
   }
 }
-await browser.close();
+if (browser) await browser.close();
 
-if (!only) {
+if (!only || concatOnly) {
   const list = join(OUT, "demo-concat.txt");
   writeFileSync(list, segments.map((s) => `file '${s.replace(/\\/g, "/")}'`).join("\n"));
   const final = join(OUT, "demo.mp4");

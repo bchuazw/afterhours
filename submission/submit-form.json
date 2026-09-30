@@ -1,0 +1,10 @@
+{
+  "contractAddress": "0x605dF7bFc5E17fF57A8F9a586Bc5032B797D4fd7",
+  "tracks": ["Overall Prize", "Promising Products Track", "Grants"],
+  "frontend": "https://bchuazw.github.io/afterhours/ (works with the built-in demo wallet, no extension needed). Repo: https://github.com/bchuazw/afterhours",
+  "core": "Robinhood Chain testnet (46630): AfterHoursMarket 0x605dF7bFc5E17fF57A8F9a586Bc5032B797D4fd7; Stylus pricer (Rust) 0x0006FC22254403d08D0Cdf1b005CD3906Cfc6fE8; FeedMirrors TSLA 0x8492cad02fD0bF9358B2988e43039e013D56FfBA, AMZN 0x75d2a760C86f4F2A7924D7E27B7aAf4244669e45, NVDA 0x6A8617F52C8A3fF40dB4a4cE99FBB20d5c0ABAF8",
+  "factory": "ERC-4626 writer vaults (deployed by the market per underlying): TSLA 0xC3a577d552d634c659595022fd28c3de49162a04, AMZN 0xBbd84594163fCBbcdA65EA02f24D34705CE44bfD, NVDA 0x3E9E214Ec55b4a2aac9F1914Be0174860045376d",
+  "token": "Positions are ERC-1155 minted by the market 0x605dF7bFc5E17fF57A8F9a586Bc5032B797D4fd7. Test quote asset tUSD (6 dec, open mint) 0x8EF7ba8dC2577cD80a1F0fAC610609AC0a4De727. Vault shares are the ERC-4626 tokens above.",
+  "builtDuring": "All of it, from 14 Sep: AfterHoursMarket, ProtectionVault, FeedMirror, the Stylus (Rust) pricer, Foundry + Rust tests, deploy scripts, keeper (feed relayer + settlement bot) and the Next.js app. Only dependencies are OpenZeppelin v5 and the Stylus SDK. Solo, public commit history.",
+  "sponsorTech": ["Robinhood Chain", "OpenZeppelin"]
+}
