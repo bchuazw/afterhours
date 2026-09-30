@@ -31,7 +31,7 @@ try {
   await ctx.close();
 }
 writeFileSync("out/hq-capture.json", JSON.stringify(captured.map((c) => ({ opName: c.opName, size: c.size })), null, 2));
-const KEYS = /complet|progress|require|missing|status|percent|standard|wallet|checkpoint|team|isSubmit|submitted/i;
+const KEYS = /complet|progress|require|missing|status|percent|standard|wallet|checkpoint|team|isSubmit|submitted|video/i;
 for (const c of captured) {
   if (!/AfterHours|dbaf7fa1/.test(c.text)) continue;
   console.log(`\n=== ${c.opName} (${c.size} bytes) ===`);
