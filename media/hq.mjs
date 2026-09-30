@@ -76,9 +76,13 @@ try {
       await page.keyboard.insertText(paras[i]);
       if (i < paras.length - 1) await page.keyboard.press("Enter");
     }
+    // Let the editor's change handler flush before saving (a nudge keystroke + settle delay).
+    await page.keyboard.type(" ");
+    await page.keyboard.press("Backspace");
+    await sleep(3000);
     const len = (await ed.innerText()).length;
     await page.getByRole("button", { name: "Save Edit" }).first().click();
-    await sleep(5000);
+    await sleep(6000);
     console.log(JSON.stringify({ progressLen: len, url: page.url() }));
   } else if (cmd === "inspect") {
     await page.goto(SUBMIT, { waitUntil: "domcontentloaded" });

@@ -41,7 +41,7 @@ for (const c of captured) {
       if (o && typeof o === "object") {
         if (Array.isArray(o)) o.forEach((v, i) => walk(v, `${path}[${i}]`));
         else for (const [k, v] of Object.entries(o)) {
-          if (KEYS.test(k) && (typeof v !== "object" || v === null || Array.isArray(v) || Object.keys(v).length < 12)) console.log(`${path}.${k} = ${JSON.stringify(v).slice(0, 300)}`);
+          if (KEYS.test(k) && (typeof v !== "object" || v === null || Array.isArray(v) || Object.keys(v).length < 12)) console.log(`${path}.${k} = ${JSON.stringify(v).slice(0, Number(process.env.SLICE ?? 300))}`);
           walk(v, `${path}.${k}`);
         }
       }
