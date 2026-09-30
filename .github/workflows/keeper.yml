@@ -1,57 +1,71 @@
 name: keeper
 
 # Mirrors Robinhood Chain mainnet Chainlink equity feeds onto the testnet FeedMirrors and settles
-# expired series, for every chain that has a deployment file. Runs every 30 minutes (each push costs
-# ~1.5e-6 ETH on Robinhood testnet, so this cadence keeps a ~0.002 ETH relayer balance alive for
-# weeks); the market is 24/5 so most weekend runs are no-ops.
+# expired series, for every chain that has a deployment file.
+#
+# Cadence: every 30 minutes. A plain `*/30` cron was fired by GitHub only every 3-4 hours (scheduled
+# runs on low-traffic repos are throttled), so one run now loops for ~5.5 h and then dispatches its
+# successor; the cron only remains as a fallback that restarts the chain if a run ever dies. The
+# concurrency group keeps a single relayer alive at a time (same key on every chain, simple nonces).
+# Each push costs ~1.5e-6 ETH on Robinhood testnet, so this cadence keeps a ~0.002 ETH relayer
+# balance alive for weeks; the market is 24/5 so most weekend passes are no-ops.
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "23 */3 * * *"
   workflow_dispatch:
 
 concurrency:
   group: keeper
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  actions: write # lets a run dispatch its successor
+
 jobs:
   relay:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      max-parallel: 1 # same relayer key on every chain; keep nonces simple
-      matrix:
-        chain: [46630, 421614]
+    timeout-minutes: 355
     env:
-      CHAIN_ID: ${{ matrix.chain }}
       RELAYER_KEY: ${{ secrets.RELAYER_KEY }}
       BACKFILL_ROUNDS: "150"
       # v2 market (submitted address) keeps being settled after the v2.1 redeploy.
       LEGACY_MARKETS: "0x605dF7bFc5E17fF57A8F9a586Bc5032B797D4fd7"
+      CHAINS: "46630 421614"
+      PERIOD_SECONDS: "1800"
+      LOOP_SECONDS: "19800" # 5.5 h, then hand over to a fresh run (job limit is 6 h)
     steps:
       - uses: actions/checkout@v4
-      - id: dep
-        name: check deployment exists
-        run: |
-          if [ -f "contracts/deployments/${CHAIN_ID}.json" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else echo "no deployment for ${CHAIN_ID}; skipping"; echo "ok=false" >> "$GITHUB_OUTPUT"; fi
-      - if: steps.dep.outputs.ok == 'true'
-        uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v4
         with:
           version: 10
-      - if: steps.dep.outputs.ok == 'true'
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: keeper/pnpm-lock.yaml
-      - if: steps.dep.outputs.ok == 'true'
-        run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile
         working-directory: keeper
-      - if: steps.dep.outputs.ok == 'true'
-        name: mirror feeds
-        run: pnpm mirror:once
+      - name: mirror feeds and settle expired series, every 30 minutes
         working-directory: keeper
-      - if: steps.dep.outputs.ok == 'true'
-        name: settle expired series
-        run: pnpm tsx src/settle.ts --once
-        working-directory: keeper
+        run: |
+          end=$(( SECONDS + LOOP_SECONDS ))
+          while :; do
+            for chain in $CHAINS; do
+              if [ ! -f "../contracts/deployments/${chain}.json" ]; then
+                echo "no deployment for ${chain}; skipping"
+                continue
+              fi
+              echo "::group::chain ${chain} at $(date -u +%FT%TZ)"
+              CHAIN_ID=$chain pnpm mirror:once || echo "::warning::mirror failed on ${chain}"
+              CHAIN_ID=$chain pnpm settle:once || echo "::warning::settle failed on ${chain}"
+              echo "::endgroup::"
+            done
+            [ "$SECONDS" -ge "$end" ] && break
+            sleep "$PERIOD_SECONDS"
+          done
+      - name: hand over to the next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run keeper.yml --ref "$GITHUB_REF_NAME"
